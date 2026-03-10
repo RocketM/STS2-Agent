@@ -37,7 +37,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | Phase 2 | 战斗状态提取 | 已完成 |
 | Phase 3 | 战斗动作执行 | 已完成 |
 | Phase 4A | 地图 / 奖励 / 宝箱 | 代码已完成（含宝箱 relic 选择），部分已实机验证 |
-| Phase 4B | 事件 / 休息点 | 未开始 |
+| Phase 4B | 事件 / 休息点 | 事件已完成（代码+MCP+文档），休息点未开始 |
 | Phase 4C | 商店 | 未开始 |
 | Phase 5 | MCP 完整化 | 基础已完成，随 4B/4C 同步扩展 |
 | Phase 6 | 集成与回归 | 未开始 |
@@ -70,6 +70,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `select_deck_card` | 待验证 |
 | `open_chest` | 代码已完成，待验证 |
 | `choose_treasure_relic` | 代码已完成，待验证 |
+| `choose_event_option` | 代码已完成，待验证 |
 
 ### 已实现状态字段
 
@@ -81,7 +82,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `map.rows` / `map.cols` / `map.starting_node` / `map.boss_node` / `map.second_boss_node` / `map.nodes` | 已实现，待实机验证 |
 | `reward.*` / `selection.*` | 已实现，部分已验证 |
 | `chest.is_opened` / `chest.has_relic_been_claimed` / `chest.relic_options` | 代码已完成，待验证 |
-| `event` | 仍为 `null` |
+| `event.event_id` / `event.title` / `event.description` / `event.is_finished` / `event.options` | 代码已完成，待验证 |
 | `shop` | 仍为 `null` |
 | `rest` | 仍为 `null` |
 | `game_over` | 仍为 `null` |
@@ -104,6 +105,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 - `proceed`
 - `open_chest`
 - `choose_treasure_relic`
+- `choose_event_option`
 
 ---
 
@@ -129,12 +131,13 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 
 ### T-2: Phase 4B 事件系统
 
-- 逆向 `NEventRoom` 子节点结构，找到事件选项按钮
-- 实现 `EventPayload`（选项列表、描述文本等）
-- 实现 `choose_event_option` 动作
-- 接入 `BuildStatePayload()` / `BuildAvailableActionNames()` / `ExecuteAsync()`
-- MCP：`client.py` + `server.py` 新增 `choose_event_option`
-- 文档：更新 `docs/api.md`
+- [x] 逆向 `NEventRoom` 子节点结构，找到事件选项按钮
+- [x] 实现 `EventPayload`（选项列表、描述文本等）
+- [x] 实现 `choose_event_option` 动作
+- [x] 接入 `BuildStatePayload()` / `BuildAvailableActionNames()` / `ExecuteAsync()`
+- [x] MCP：`client.py` + `server.py` 新增 `choose_event_option`
+- [x] 文档：更新 `docs/api.md`
+- [ ] 实机验证
 
 涉及文件：`GameStateService.cs`、`GameActionService.cs`、`client.py`、`server.py`、`docs/api.md`
 

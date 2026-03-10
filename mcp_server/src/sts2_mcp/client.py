@@ -166,6 +166,16 @@ class Sts2Client:
             },
         )
 
+    def choose_event_option(self, option_index: int) -> dict[str, Any]:
+        return self.execute_action(
+            "choose_event_option",
+            option_index=option_index,
+            client_context={
+                "source": "mcp",
+                "tool_name": "choose_event_option",
+            },
+        )
+
     def execute_action(
         self,
         action: str,

@@ -52,6 +52,7 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             run – deck, relics, potions, gold, hp.
             map – current_node, available_nodes[].
             chest – is_opened, has_relic_been_claimed, relic_options[].
+            event – event_id, title, description, is_finished, options[].
             reward – pending_card_choice, rewards[], card_options[], alternatives[].
             selection – kind, prompt, cards[] (e.g. card removal screen).
 
@@ -301,6 +302,42 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             invalid_target – option_index out of range.
         """
         return sts2.choose_treasure_relic(option_index=option_index)
+
+    @mcp.tool
+    def choose_event_option(option_index: int) -> dict[str, Any]:
+        """Choose an option in the current event room.
+
+        Args:
+            option_index: zero-based index into event.options[]. When
+                event.is_finished is true, only index 0 (proceed) is valid.
+
+        Preconditions:
+            - screen is EVENT.
+            - available_actions includes "choose_event_option".
+            - event.options is non-empty.
+
+        Behavior depends on event state:
+            - If is_finished=false: selects a normal event option. After
+              choosing, the event may present new options, finish, or
+              transition to combat.
+            - If is_finished=true: the only option is proceed (index 0),
+              which returns to the map.
+
+        Decision flow:
+            1. Read get_game_state() -> check event.options[].
+            2. Pick an option where is_locked=false.
+            3. Call choose_event_option(option_index).
+            4. Read state again — the event may have new options or be
+               finished.
+
+        Returns updated game state in data.state.
+
+        Common errors:
+            invalid_action – not in an event room or no options available.
+            invalid_request – option_index missing.
+            invalid_target – option_index out of range or option is locked.
+        """
+        return sts2.choose_event_option(option_index=option_index)
 
     @mcp.tool
     def proceed() -> dict[str, Any]:

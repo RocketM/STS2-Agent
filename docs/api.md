@@ -64,7 +64,7 @@
 | `CHARACTER_SELECT` | 角色选择界面 |
 | `MAP` | 地图界面 |
 | `COMBAT` | 战斗中 |
-| `EVENT` | 事件交互（暂未实现状态提取） |
+| `EVENT` | 事件交互 |
 | `SHOP` | 商店（暂未实现状态提取） |
 | `REST` | 休息点（暂未实现状态提取） |
 | `REWARD` | 奖励结算 / 卡牌奖励选择 |
@@ -126,7 +126,7 @@
 | `reward` | object \| null | 奖励状态（仅奖励界面存在） |
 | `selection` | object \| null | 选牌状态（仅选牌界面存在） |
 | `chest` | object \| null | 宝箱状态（仅宝箱房存在） |
-| `event` | null | 事件状态（暂未实现） |
+| `event` | object \| null | 事件状态（仅事件房存在） |
 | `shop` | null | 商店状态（暂未实现） |
 | `rest` | null | 休息点状态（暂未实现） |
 | `game_over` | null | 游戏结束状态（暂未实现） |
@@ -333,6 +333,29 @@
 | `relic_id` | string | 遗物内部 ID |
 | `name` | string | 遗物名称 |
 | `rarity` | string | 稀有度（`Common`, `Uncommon`, `Rare` 等） |
+
+### `event` 子结构
+
+当 `screen` 为 `EVENT` 时存在。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `event_id` | string | 事件内部 ID |
+| `title` | string | 事件标题 |
+| `description` | string | 事件描述文本 |
+| `is_finished` | boolean | 事件是否已完成（完成时仅剩 proceed 选项） |
+| `options[]` | object[] | 当前可选选项列表 |
+
+#### `event.options[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `choose_event_option` 的 `option_index` |
+| `text_key` | string | 选项文本键（内部标识） |
+| `title` | string | 选项标题 |
+| `description` | string | 选项描述 |
+| `is_locked` | boolean | 选项是否被锁定（锁定选项不可选） |
+| `is_proceed` | boolean | 是否为继续/离开选项 |
 
 ### 状态示例：战斗中
 
@@ -887,6 +910,27 @@
 - **稳定条件**：遗物被授予，界面回到宝箱房主界面
 - **超时**：10 秒
 
+### `choose_event_option`
+
+选择事件房中的一个选项。
+
+- **前提**：`screen` = `EVENT`，`event.options` 非空
+- **参数**：
+
+| 字段 | 必须 | 说明 |
+| --- | --- | --- |
+| `option_index` | 是 | `event.options[]` 的索引 |
+
+- 选择普通选项时，事件可能进入下一阶段（新选项出现）、结束（`is_finished`=true）、或触发战斗
+- 选择 `is_proceed`=true 的选项时，返回地图
+- 事件完成后（`is_finished`=true），仅 `option_index`=0（proceed）有效
+- **稳定条件**：事件选项变化 / 事件完成 / 界面切换
+- **超时**：10 秒
+
+```
+请求: { "action": "choose_event_option", "option_index": 0 }
+```
+
 ### `proceed`
 
 点击当前界面的"继续"按钮。
@@ -942,6 +986,17 @@
 6. POST /action { proceed }            → 继续到地图
 ```
 
+### 事件房
+
+```
+1. GET /state                          → screen=EVENT, event.options[] 列出可选选项
+2. 选择 is_locked=false 的选项
+3. POST /action { choose_event_option, option_index=0 }  → 选择选项
+4. GET /state                          → 事件可能更新选项或完成
+5. 若 event.is_finished=true，选项仅剩 proceed（index=0）
+6. POST /action { choose_event_option, option_index=0 }  → 离开事件，返回地图
+```
+
 ---
 
 ## 后续计划
@@ -950,7 +1005,6 @@
 
 | 功能 | 对应字段 / 动作 | 计划阶段 |
 | --- | --- | --- |
-| 事件系统 | `event` payload + `choose_event_option` | Phase 4B |
 | 休息点 | `rest` payload + `rest_site_action` | Phase 4B |
 | 商店 | `shop` payload + `buy_card` / `buy_relic` / `buy_potion` / `remove_card_at_shop` | Phase 4C |
 | 游戏结束 | `game_over` payload | Phase 4C+ |

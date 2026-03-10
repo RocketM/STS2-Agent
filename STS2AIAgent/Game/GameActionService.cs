@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens;
 using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
@@ -44,6 +45,7 @@ internal static class GameActionService
             "proceed" => ExecuteProceedAsync(),
             "open_chest" => ExecuteOpenChestAsync(),
             "choose_treasure_relic" => ExecuteChooseTreasureRelicAsync(request),
+            "choose_event_option" => ExecuteChooseEventOptionAsync(request),
             _ => throw new ApiException(409, "invalid_action", "Action is not supported yet.", new
             {
                 action = request.action
@@ -1045,6 +1047,146 @@ internal static class GameActionService
             message = stable ? "Action completed." : "Action queued but state is still transitioning.",
             state = GameStateService.BuildStatePayload()
         };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteChooseEventOptionAsync(ActionRequest request)
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+
+        if (!GameStateService.CanChooseEventOption(currentScreen))
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "choose_event_option",
+                screen
+            });
+        }
+
+        if (request.option_index == null)
+        {
+            throw new ApiException(400, "invalid_request", "choose_event_option requires option_index.", new
+            {
+                action = "choose_event_option"
+            });
+        }
+
+        var eventModel = RunManager.Instance.EventSynchronizer.GetLocalEvent();
+
+        if (eventModel.IsFinished)
+        {
+            // Finished events only have the synthetic proceed option at index 0
+            if (request.option_index != 0)
+            {
+                throw new ApiException(409, "invalid_target", "Event is finished. Only option_index 0 (proceed) is valid.", new
+                {
+                    action = "choose_event_option",
+                    option_index = request.option_index,
+                    is_finished = true
+                });
+            }
+
+            await NEventRoom.Proceed();
+            var stable = await WaitForEventScreenTransitionAsync(TimeSpan.FromSeconds(10));
+
+            return new ActionResponsePayload
+            {
+                action = "choose_event_option",
+                status = stable ? "completed" : "pending",
+                stable = stable,
+                message = stable ? "Event proceeded." : "Proceed queued but state is still transitioning.",
+                state = GameStateService.BuildStatePayload()
+            };
+        }
+
+        // Non-finished event: choose an option
+        var options = eventModel.CurrentOptions;
+        if (request.option_index < 0 || request.option_index >= options.Count)
+        {
+            throw new ApiException(409, "invalid_target", "option_index is out of range.", new
+            {
+                action = "choose_event_option",
+                option_index = request.option_index,
+                option_count = options.Count
+            });
+        }
+
+        if (options[request.option_index.Value].IsLocked)
+        {
+            throw new ApiException(409, "invalid_target", "The selected event option is locked.", new
+            {
+                action = "choose_event_option",
+                option_index = request.option_index
+            });
+        }
+
+        RunManager.Instance.EventSynchronizer.ChooseLocalOption(request.option_index.Value);
+        var stableOption = await WaitForEventOptionTransitionAsync(eventModel, options.Count, TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "choose_event_option",
+            status = stableOption ? "completed" : "pending",
+            stable = stableOption,
+            message = stableOption ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    /// <summary>
+    /// Waits for screen to leave NEventRoom (used after proceed).
+    /// </summary>
+    private static async Task<bool> WaitForEventScreenTransitionAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (currentScreen is not NEventRoom)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Waits for event state to change after choosing an option.
+    /// Detects: screen change, IsFinished change, or options count change.
+    /// </summary>
+    private static async Task<bool> WaitForEventOptionTransitionAsync(
+        EventModel eventModel, int previousOptionCount, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+
+            // Screen changed entirely (e.g. combat started from event)
+            if (currentScreen is not NEventRoom)
+            {
+                return true;
+            }
+
+            // Event finished
+            if (eventModel.IsFinished)
+            {
+                return true;
+            }
+
+            // Options changed (new page of options appeared)
+            if (eventModel.CurrentOptions.Count != previousOptionCount)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static async Task<bool> WaitForRelicPickTransitionAsync(TimeSpan timeout)

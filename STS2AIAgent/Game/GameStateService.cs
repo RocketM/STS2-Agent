@@ -3,12 +3,14 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Nodes.Screens;
@@ -52,7 +54,7 @@ internal static class GameStateService
             map = BuildMapPayload(currentScreen, runState),
             selection = BuildSelectionPayload(currentScreen),
             chest = BuildChestPayload(currentScreen),
-            @event = null,
+            @event = BuildEventPayload(currentScreen),
             shop = null,
             rest = null,
             reward = BuildRewardPayload(currentScreen),
@@ -177,6 +179,16 @@ internal static class GameStateService
             });
         }
 
+        if (CanChooseEventOption(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "choose_event_option",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
         return new AvailableActionsPayload
         {
             screen = ResolveScreen(currentScreen),
@@ -287,6 +299,36 @@ internal static class GameStateService
 
         var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
         return relics != null && relics.Count > 0;
+    }
+
+    public static bool CanChooseEventOption(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NEventRoom)
+        {
+            return false;
+        }
+
+        try
+        {
+            var eventModel = RunManager.Instance.EventSynchronizer.GetLocalEvent();
+            if (eventModel == null)
+            {
+                return false;
+            }
+
+            // Finished events have a synthetic proceed option
+            if (eventModel.IsFinished)
+            {
+                return true;
+            }
+
+            // Non-finished events need at least one non-locked option
+            return eventModel.CurrentOptions.Any(o => !o.IsLocked);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static IReadOnlyList<NMapPoint> GetAvailableMapNodes(IScreenContext? currentScreen, RunState? runState)
@@ -564,6 +606,11 @@ internal static class GameStateService
             names.Add("choose_treasure_relic");
         }
 
+        if (CanChooseEventOption(currentScreen))
+        {
+            names.Add("choose_event_option");
+        }
+
         return names.ToArray();
     }
 
@@ -692,6 +739,69 @@ internal static class GameStateService
             prompt = GetDeckSelectionPrompt(currentScreen) ?? string.Empty,
             cards = cards.Select((holder, index) => BuildSelectionCardPayload(holder.CardModel!, index)).ToArray()
         };
+    }
+
+    private static EventPayload? BuildEventPayload(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NEventRoom)
+        {
+            return null;
+        }
+
+        try
+        {
+            var eventModel = RunManager.Instance.EventSynchronizer.GetLocalEvent();
+            if (eventModel == null)
+            {
+                return null;
+            }
+
+            var options = new List<EventOptionPayload>();
+
+            if (eventModel.IsFinished)
+            {
+                // Mirror NEventRoom.SetOptions(): synthesize a Proceed option
+                options.Add(new EventOptionPayload
+                {
+                    index = 0,
+                    text_key = "PROCEED",
+                    title = "Proceed",
+                    description = "",
+                    is_locked = false,
+                    is_proceed = true
+                });
+            }
+            else
+            {
+                var currentOptions = eventModel.CurrentOptions;
+                for (int i = 0; i < currentOptions.Count; i++)
+                {
+                    var opt = currentOptions[i];
+                    options.Add(new EventOptionPayload
+                    {
+                        index = i,
+                        text_key = opt.TextKey ?? "",
+                        title = opt.Title?.GetFormattedText() ?? "",
+                        description = opt.Description?.GetFormattedText() ?? "",
+                        is_locked = opt.IsLocked,
+                        is_proceed = opt.IsProceed
+                    });
+                }
+            }
+
+            return new EventPayload
+            {
+                event_id = eventModel.Id?.Entry ?? "unknown",
+                title = eventModel.Title?.GetFormattedText() ?? "",
+                description = eventModel.Description?.GetFormattedText() ?? "",
+                is_finished = eventModel.IsFinished,
+                options = options.ToArray()
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static ChestPayload? BuildChestPayload(IScreenContext? currentScreen)
@@ -1081,7 +1191,7 @@ internal sealed class GameStatePayload
 
     public ChestPayload? chest { get; init; }
 
-    public object? @event { get; init; }
+    public EventPayload? @event { get; init; }
 
     public object? shop { get; init; }
 
@@ -1177,6 +1287,34 @@ internal sealed class ChestRelicOptionPayload
     public string name { get; init; } = string.Empty;
 
     public string rarity { get; init; } = string.Empty;
+}
+
+internal sealed class EventPayload
+{
+    public string event_id { get; init; } = string.Empty;
+
+    public string title { get; init; } = string.Empty;
+
+    public string description { get; init; } = string.Empty;
+
+    public bool is_finished { get; init; }
+
+    public EventOptionPayload[] options { get; init; } = Array.Empty<EventOptionPayload>();
+}
+
+internal sealed class EventOptionPayload
+{
+    public int index { get; init; }
+
+    public string text_key { get; init; } = string.Empty;
+
+    public string title { get; init; } = string.Empty;
+
+    public string description { get; init; } = string.Empty;
+
+    public bool is_locked { get; init; }
+
+    public bool is_proceed { get; init; }
 }
 
 internal sealed class MapCoordPayload
