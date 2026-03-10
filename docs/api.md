@@ -66,7 +66,7 @@
 | `COMBAT` | 战斗中 |
 | `EVENT` | 事件交互 |
 | `SHOP` | 商店（暂未实现状态提取） |
-| `REST` | 休息点（暂未实现状态提取） |
+| `REST` | 休息点 |
 | `REWARD` | 奖励结算 / 卡牌奖励选择 |
 | `CHEST` | 宝箱房 |
 | `CARD_SELECTION` | 牌库选牌界面（删牌等） |
@@ -128,7 +128,7 @@
 | `chest` | object \| null | 宝箱状态（仅宝箱房存在） |
 | `event` | object \| null | 事件状态（仅事件房存在） |
 | `shop` | null | 商店状态（暂未实现） |
-| `rest` | null | 休息点状态（暂未实现） |
+| `rest` | object \| null | 休息点状态（仅休息点存在） |
 | `game_over` | null | 游戏结束状态（暂未实现） |
 
 ### `combat` 子结构
@@ -356,6 +356,24 @@
 | `description` | string | 选项描述 |
 | `is_locked` | boolean | 选项是否被锁定（锁定选项不可选） |
 | `is_proceed` | boolean | 是否为继续/离开选项 |
+
+### `rest` 子结构
+
+当 `screen` 为 `REST` 时存在。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `options[]` | object[] | 可选休息点操作列表 |
+
+#### `rest.options[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `choose_rest_option` 的 `option_index` |
+| `option_id` | string | 操作类型（`HEAL`, `SMITH`, `MEND`, `LIFT`, `COOK`, `DIG`, `HATCH`, `CLONE` 等） |
+| `title` | string | 操作标题 |
+| `description` | string | 操作描述 |
+| `is_enabled` | boolean | 操作是否可用（如 `SMITH` 需要有可升级卡牌） |
 
 ### 状态示例：战斗中
 
@@ -931,6 +949,27 @@
 请求: { "action": "choose_event_option", "option_index": 0 }
 ```
 
+### `choose_rest_option`
+
+选择休息点的一个操作。
+
+- **前提**：`screen` = `REST`，`rest.options` 中存在 `is_enabled`=true 的选项
+- **参数**：
+
+| 字段 | 必须 | 说明 |
+| --- | --- | --- |
+| `option_index` | 是 | `rest.options[]` 的索引 |
+
+- `HEAL`：恢复约 30% HP，完成后 ProceedButton 出现，调用 `proceed` 离开
+- `SMITH`：界面切换到 `CARD_SELECTION`，使用 `select_deck_card` 选牌升级
+- 其他选项：行为因圣物/游戏状态而异
+- **稳定条件**：界面切换（如卡牌选择）或 ProceedButton 出现
+- **超时**：10 秒
+
+```
+请求: { "action": "choose_rest_option", "option_index": 0 }
+```
+
 ### `proceed`
 
 点击当前界面的"继续"按钮。
@@ -997,6 +1036,28 @@
 6. POST /action { choose_event_option, option_index=0 }  → 离开事件，返回地图
 ```
 
+### 休息点（恢复 HP）
+
+```
+1. GET /state                          → screen=REST, rest.options[] 列出可选操作
+2. 选择 is_enabled=true 的 HEAL 选项
+3. POST /action { choose_rest_option, option_index=0 }  → 恢复 HP
+4. GET /state                          → ProceedButton 可用
+5. POST /action { proceed }            → 继续到地图
+```
+
+### 休息点（升级牌）
+
+```
+1. GET /state                          → screen=REST, rest.options[] 列出可选操作
+2. 选择 SMITH 选项（is_enabled=true 表示有可升级卡牌）
+3. POST /action { choose_rest_option, option_index=N }  → 进入卡牌选择
+4. GET /state                          → screen=CARD_SELECTION, selection.cards[]
+5. POST /action { select_deck_card, option_index=M }    → 选择要升级的卡牌
+6. GET /state                          → 回到 REST，ProceedButton 可用
+7. POST /action { proceed }            → 继续到地图
+```
+
 ---
 
 ## 后续计划
@@ -1005,7 +1066,6 @@
 
 | 功能 | 对应字段 / 动作 | 计划阶段 |
 | --- | --- | --- |
-| 休息点 | `rest` payload + `rest_site_action` | Phase 4B |
 | 商店 | `shop` payload + `buy_card` / `buy_relic` / `buy_potion` / `remove_card_at_shop` | Phase 4C |
 | 游戏结束 | `game_over` payload | Phase 4C+ |
 | 药水使用 | `use_potion` | Phase 3+ |

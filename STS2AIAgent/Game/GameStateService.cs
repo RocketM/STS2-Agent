@@ -3,6 +3,7 @@ using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.Entities.RestSite;
 using MegaCrit.Sts2.Core.Events;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Map;
@@ -56,7 +57,7 @@ internal static class GameStateService
             chest = BuildChestPayload(currentScreen),
             @event = BuildEventPayload(currentScreen),
             shop = null,
-            rest = null,
+            rest = BuildRestPayload(currentScreen),
             reward = BuildRewardPayload(currentScreen),
             game_over = null
         };
@@ -189,6 +190,16 @@ internal static class GameStateService
             });
         }
 
+        if (CanChooseRestOption(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "choose_rest_option",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
         return new AvailableActionsPayload
         {
             screen = ResolveScreen(currentScreen),
@@ -202,7 +213,7 @@ internal static class GameStateService
         {
             NGameOverScreen => "GAME_OVER",
             NCardRewardSelectionScreen => "REWARD",
-            NDeckCardSelectScreen => "CARD_SELECTION",
+            NDeckCardSelectScreen or NDeckUpgradeSelectScreen => "CARD_SELECTION",
             NRewardsScreen => "REWARD",
             NTreasureRoom or NTreasureRoomRelicCollection => "CHEST",
             NRestSiteRoom => "REST",
@@ -331,6 +342,24 @@ internal static class GameStateService
         }
     }
 
+    public static bool CanChooseRestOption(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NRestSiteRoom)
+        {
+            return false;
+        }
+
+        try
+        {
+            var options = RunManager.Instance.RestSiteSynchronizer.GetLocalOptions();
+            return options != null && options.Any(o => o.IsEnabled);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static IReadOnlyList<NMapPoint> GetAvailableMapNodes(IScreenContext? currentScreen, RunState? runState)
     {
         if (!TryGetMapScreen(currentScreen, runState, out var mapScreen))
@@ -400,12 +429,12 @@ internal static class GameStateService
 
     public static IReadOnlyList<NGridCardHolder> GetDeckSelectionOptions(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NDeckCardSelectScreen deckCardSelectScreen)
+        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen)
         {
             return Array.Empty<NGridCardHolder>();
         }
 
-        return FindDescendants<NGridCardHolder>(deckCardSelectScreen)
+        return FindDescendants<NGridCardHolder>(cardSelectScreen)
             .Where(node => GodotObject.IsInstanceValid(node) && node.CardModel != null)
             .OrderBy(node => node.GlobalPosition.Y)
             .ThenBy(node => node.GlobalPosition.X)
@@ -414,12 +443,12 @@ internal static class GameStateService
 
     public static string? GetDeckSelectionPrompt(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NDeckCardSelectScreen deckCardSelectScreen)
+        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen)
         {
             return null;
         }
 
-        return deckCardSelectScreen.GetNodeOrNull<MegaRichTextLabel>("%BottomLabel")?.Text;
+        return cardSelectScreen.GetNodeOrNull<MegaRichTextLabel>("%BottomLabel")?.Text;
     }
 
     public static NProceedButton? GetProceedButton(IScreenContext? currentScreen)
@@ -611,6 +640,11 @@ internal static class GameStateService
             names.Add("choose_event_option");
         }
 
+        if (CanChooseRestOption(currentScreen))
+        {
+            names.Add("choose_rest_option");
+        }
+
         return names.ToArray();
     }
 
@@ -796,6 +830,42 @@ internal static class GameStateService
                 description = eventModel.Description?.GetFormattedText() ?? "",
                 is_finished = eventModel.IsFinished,
                 options = options.ToArray()
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static RestPayload? BuildRestPayload(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NRestSiteRoom)
+        {
+            return null;
+        }
+
+        try
+        {
+            var options = RunManager.Instance.RestSiteSynchronizer.GetLocalOptions();
+            if (options == null)
+            {
+                return new RestPayload
+                {
+                    options = Array.Empty<RestOptionPayload>()
+                };
+            }
+
+            return new RestPayload
+            {
+                options = options.Select((opt, i) => new RestOptionPayload
+                {
+                    index = i,
+                    option_id = opt.OptionId ?? "unknown",
+                    title = opt.Title?.GetFormattedText() ?? "",
+                    description = opt.Description?.GetFormattedText() ?? "",
+                    is_enabled = opt.IsEnabled
+                }).ToArray()
             };
         }
         catch
@@ -1195,7 +1265,7 @@ internal sealed class GameStatePayload
 
     public object? shop { get; init; }
 
-    public object? rest { get; init; }
+    public RestPayload? rest { get; init; }
 
     public RewardPayload? reward { get; init; }
 
@@ -1315,6 +1385,24 @@ internal sealed class EventOptionPayload
     public bool is_locked { get; init; }
 
     public bool is_proceed { get; init; }
+}
+
+internal sealed class RestPayload
+{
+    public RestOptionPayload[] options { get; init; } = Array.Empty<RestOptionPayload>();
+}
+
+internal sealed class RestOptionPayload
+{
+    public int index { get; init; }
+
+    public string option_id { get; init; } = string.Empty;
+
+    public string title { get; init; } = string.Empty;
+
+    public string description { get; init; } = string.Empty;
+
+    public bool is_enabled { get; init; }
 }
 
 internal sealed class MapCoordPayload

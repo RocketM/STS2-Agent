@@ -46,6 +46,7 @@ internal static class GameActionService
             "open_chest" => ExecuteOpenChestAsync(),
             "choose_treasure_relic" => ExecuteChooseTreasureRelicAsync(request),
             "choose_event_option" => ExecuteChooseEventOptionAsync(request),
+            "choose_rest_option" => ExecuteChooseRestOptionAsync(request),
             _ => throw new ApiException(409, "invalid_action", "Action is not supported yet.", new
             {
                 action = request.action
@@ -663,7 +664,7 @@ internal static class GameActionService
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
         var screen = GameStateService.ResolveScreen(currentScreen);
 
-        if (currentScreen is not NDeckCardSelectScreen deckCardSelectScreen || !GameStateService.CanSelectDeckCard(currentScreen))
+        if (currentScreen is not NCardGridSelectionScreen cardSelectScreen || !GameStateService.CanSelectDeckCard(currentScreen))
         {
             throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
             {
@@ -693,7 +694,7 @@ internal static class GameActionService
 
         var selected = options[request.option_index.Value];
         selected.EmitSignal(NCardHolder.SignalName.Pressed, selected);
-        var stable = await ConfirmDeckSelectionAsync(deckCardSelectScreen, TimeSpan.FromSeconds(10));
+        var stable = await ConfirmDeckSelectionAsync(cardSelectScreen, TimeSpan.FromSeconds(10));
 
         return new ActionResponsePayload
         {
@@ -905,7 +906,7 @@ internal static class GameActionService
         return false;
     }
 
-    private static async Task<bool> ConfirmDeckSelectionAsync(NDeckCardSelectScreen screen, TimeSpan timeout)
+    private static async Task<bool> ConfirmDeckSelectionAsync(NCardGridSelectionScreen screen, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
 
@@ -936,14 +937,14 @@ internal static class GameActionService
         return false;
     }
 
-    private static async Task<bool> WaitForDeckSelectionResolutionAsync(NDeckCardSelectScreen screen, DateTime deadline)
+    private static async Task<bool> WaitForDeckSelectionResolutionAsync(NCardGridSelectionScreen screen, DateTime deadline)
     {
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
 
             if (!GodotObject.IsInstanceValid(screen) ||
-                ActiveScreenContext.Instance.GetCurrentScreen() is not NDeckCardSelectScreen)
+                ActiveScreenContext.Instance.GetCurrentScreen() is not NCardGridSelectionScreen)
             {
                 return true;
             }
@@ -1181,6 +1182,96 @@ internal static class GameActionService
 
             // Options changed (new page of options appeared)
             if (eventModel.CurrentOptions.Count != previousOptionCount)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteChooseRestOptionAsync(ActionRequest request)
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+
+        if (!GameStateService.CanChooseRestOption(currentScreen))
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "choose_rest_option",
+                screen
+            });
+        }
+
+        if (request.option_index == null)
+        {
+            throw new ApiException(400, "invalid_request", "choose_rest_option requires option_index.", new
+            {
+                action = "choose_rest_option"
+            });
+        }
+
+        var options = RunManager.Instance.RestSiteSynchronizer.GetLocalOptions();
+        if (options == null || request.option_index < 0 || request.option_index >= options.Count)
+        {
+            throw new ApiException(409, "invalid_target", "option_index is out of range.", new
+            {
+                action = "choose_rest_option",
+                option_index = request.option_index,
+                option_count = options?.Count ?? 0
+            });
+        }
+
+        if (!options[request.option_index.Value].IsEnabled)
+        {
+            throw new ApiException(409, "invalid_target", "The selected rest option is disabled.", new
+            {
+                action = "choose_rest_option",
+                option_index = request.option_index
+            });
+        }
+
+        // Fire-and-forget: ChooseLocalOption returns Task<bool> which for SMITH
+        // blocks until card selection completes. We must not await it, otherwise
+        // the HTTP response would be stuck waiting for the AI to interact with
+        // the card selection screen.
+        _ = RunManager.Instance.RestSiteSynchronizer.ChooseLocalOption(request.option_index.Value);
+        var stable = await WaitForRestOptionTransitionAsync(TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "choose_rest_option",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    /// <summary>
+    /// Waits for rest site state to change after choosing an option.
+    /// Detects: screen change (SMITH → card selection), ProceedButton appearance
+    /// (HEAL), or options list change.
+    /// </summary>
+    private static async Task<bool> WaitForRestOptionTransitionAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+
+            // Screen changed entirely (e.g. SMITH opened card selection)
+            if (currentScreen is not NRestSiteRoom restSiteRoom)
+            {
+                return true;
+            }
+
+            // ProceedButton became available (e.g. after HEAL)
+            var proceedButton = restSiteRoom.ProceedButton;
+            if (proceedButton != null && GodotObject.IsInstanceValid(proceedButton) && proceedButton.IsEnabled)
             {
                 return true;
             }

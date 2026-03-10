@@ -37,7 +37,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | Phase 2 | 战斗状态提取 | 已完成 |
 | Phase 3 | 战斗动作执行 | 已完成 |
 | Phase 4A | 地图 / 奖励 / 宝箱 | 代码已完成（含宝箱 relic 选择），部分已实机验证 |
-| Phase 4B | 事件 / 休息点 | 事件已完成（代码+MCP+文档），休息点未开始 |
+| Phase 4B | 事件 / 休息点 | 已完成（代码+MCP+文档），待实机验证 |
 | Phase 4C | 商店 | 未开始 |
 | Phase 5 | MCP 完整化 | 基础已完成，随 4B/4C 同步扩展 |
 | Phase 6 | 集成与回归 | 未开始 |
@@ -71,6 +71,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `open_chest` | 代码已完成，待验证 |
 | `choose_treasure_relic` | 代码已完成，待验证 |
 | `choose_event_option` | 代码已完成，待验证 |
+| `choose_rest_option` | 代码已完成，待验证 |
 
 ### 已实现状态字段
 
@@ -83,6 +84,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `reward.*` / `selection.*` | 已实现，部分已验证 |
 | `chest.is_opened` / `chest.has_relic_been_claimed` / `chest.relic_options` | 代码已完成，待验证 |
 | `event.event_id` / `event.title` / `event.description` / `event.is_finished` / `event.options` | 代码已完成，待验证 |
+| `rest.options` | 代码已完成，待验证 |
 | `shop` | 仍为 `null` |
 | `rest` | 仍为 `null` |
 | `game_over` | 仍为 `null` |
@@ -106,6 +108,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 - `open_chest`
 - `choose_treasure_relic`
 - `choose_event_option`
+- `choose_rest_option`
 
 ---
 
@@ -143,11 +146,12 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 
 ### T-3: Phase 4B 休息点系统
 
-- 逆向 `NRestSiteRoom` 子节点结构
-- 实现 `RestPayload`（可选动作：休息 / 升级牌 / 其他）
-- 实现 `rest_site_action` 动作
-- 复用或扩展 `select_deck_card` 覆盖升级牌场景
-- MCP + 文档同步
+- [x] 逆向 `NRestSiteRoom` 子节点结构
+- [x] 实现 `RestPayload`（可选动作：休息 / 升级牌 / 其他）
+- [x] 实现 `choose_rest_option` 动作
+- [x] 扩展 `select_deck_card` 覆盖升级牌场景（NCardGridSelectionScreen 基类统一）
+- [x] MCP + 文档同步
+- [ ] 实机验证
 
 涉及文件：同 T-2
 

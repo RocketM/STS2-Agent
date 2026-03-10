@@ -53,6 +53,7 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             map – current_node, available_nodes[].
             chest – is_opened, has_relic_been_claimed, relic_options[].
             event – event_id, title, description, is_finished, options[].
+            rest – options[] (available rest site choices with option_id, title).
             reward – pending_card_choice, rewards[], card_options[], alternatives[].
             selection – kind, prompt, cards[] (e.g. card removal screen).
 
@@ -338,6 +339,38 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             invalid_target – option_index out of range or option is locked.
         """
         return sts2.choose_event_option(option_index=option_index)
+
+    @mcp.tool
+    def choose_rest_option(option_index: int) -> dict[str, Any]:
+        """Choose a rest site option (heal, smith/upgrade, etc.).
+
+        Args:
+            option_index: zero-based index into rest.options[].
+
+        Preconditions:
+            - screen is REST.
+            - available_actions includes "choose_rest_option".
+            - rest.options is non-empty with at least one enabled option.
+
+        Common option_id values:
+            HEAL – restore ~30% HP.
+            SMITH – upgrade a card (transitions to card selection screen;
+                    use select_deck_card to pick which card to upgrade).
+            Other options depend on relics/game state (LIFT, COOK, DIG, etc.).
+
+        After choosing:
+            - HEAL and similar: ProceedButton appears. Call proceed to leave.
+            - SMITH: screen changes to CARD_SELECTION. Use select_deck_card
+              to pick a card, then proceed returns you to the map.
+
+        Returns updated game state in data.state.
+
+        Common errors:
+            invalid_action – not in a rest site room or no options available.
+            invalid_request – option_index missing.
+            invalid_target – option_index out of range or option is disabled.
+        """
+        return sts2.choose_rest_option(option_index=option_index)
 
     @mcp.tool
     def proceed() -> dict[str, Any]:
