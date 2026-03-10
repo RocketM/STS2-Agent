@@ -6,6 +6,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Map;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
@@ -50,6 +51,7 @@ internal static class GameStateService
             run = BuildRunPayload(runState),
             map = BuildMapPayload(currentScreen, runState),
             selection = BuildSelectionPayload(currentScreen),
+            chest = BuildChestPayload(currentScreen),
             @event = null,
             shop = null,
             rest = null,
@@ -155,6 +157,26 @@ internal static class GameStateService
             });
         }
 
+        if (CanOpenChest(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "open_chest",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanChooseTreasureRelic(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "choose_treasure_relic",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
         return new AvailableActionsPayload
         {
             screen = ResolveScreen(currentScreen),
@@ -243,6 +265,28 @@ internal static class GameStateService
     public static bool CanProceed(IScreenContext? currentScreen)
     {
         return GetProceedButton(currentScreen) != null;
+    }
+
+    public static bool CanOpenChest(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NTreasureRoom treasureRoom)
+        {
+            return false;
+        }
+
+        var chestButton = treasureRoom.GetNodeOrNull<NButton>("%Chest");
+        return chestButton != null && GodotObject.IsInstanceValid(chestButton) && chestButton.IsEnabled;
+    }
+
+    public static bool CanChooseTreasureRelic(IScreenContext? currentScreen)
+    {
+        if (currentScreen is not NTreasureRoomRelicCollection)
+        {
+            return false;
+        }
+
+        var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
+        return relics != null && relics.Count > 0;
     }
 
     public static IReadOnlyList<NMapPoint> GetAvailableMapNodes(IScreenContext? currentScreen, RunState? runState)
@@ -510,6 +554,16 @@ internal static class GameStateService
             names.Add("proceed");
         }
 
+        if (CanOpenChest(currentScreen))
+        {
+            names.Add("open_chest");
+        }
+
+        if (CanChooseTreasureRelic(currentScreen))
+        {
+            names.Add("choose_treasure_relic");
+        }
+
         return names.ToArray();
     }
 
@@ -638,6 +692,55 @@ internal static class GameStateService
             prompt = GetDeckSelectionPrompt(currentScreen) ?? string.Empty,
             cards = cards.Select((holder, index) => BuildSelectionCardPayload(holder.CardModel!, index)).ToArray()
         };
+    }
+
+    private static ChestPayload? BuildChestPayload(IScreenContext? currentScreen)
+    {
+        if (currentScreen is NTreasureRoomRelicCollection)
+        {
+            var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
+            return new ChestPayload
+            {
+                is_opened = true,
+                has_relic_been_claimed = false,
+                relic_options = BuildTreasureRelicOptions(relics)
+            };
+        }
+
+        if (currentScreen is NTreasureRoom treasureRoom)
+        {
+            var chestButton = treasureRoom.GetNodeOrNull<NButton>("%Chest");
+            var isOpened = chestButton == null || !GodotObject.IsInstanceValid(chestButton) || !chestButton.IsEnabled;
+            var proceedButton = treasureRoom.ProceedButton;
+            var hasRelicBeenClaimed = proceedButton != null
+                && GodotObject.IsInstanceValid(proceedButton)
+                && proceedButton.IsEnabled;
+
+            return new ChestPayload
+            {
+                is_opened = isOpened,
+                has_relic_been_claimed = hasRelicBeenClaimed,
+                relic_options = Array.Empty<ChestRelicOptionPayload>()
+            };
+        }
+
+        return null;
+    }
+
+    private static ChestRelicOptionPayload[] BuildTreasureRelicOptions(IReadOnlyList<RelicModel>? relics)
+    {
+        if (relics == null || relics.Count == 0)
+        {
+            return Array.Empty<ChestRelicOptionPayload>();
+        }
+
+        return relics.Select((relic, index) => new ChestRelicOptionPayload
+        {
+            index = index,
+            relic_id = relic.Id.Entry,
+            name = relic.Title.GetFormattedText(),
+            rarity = relic.Rarity.ToString()
+        }).ToArray();
     }
 
     private static RewardPayload? BuildRewardPayload(IScreenContext? currentScreen)
@@ -976,6 +1079,8 @@ internal sealed class GameStatePayload
 
     public SelectionPayload? selection { get; init; }
 
+    public ChestPayload? chest { get; init; }
+
     public object? @event { get; init; }
 
     public object? shop { get; init; }
@@ -1052,6 +1157,26 @@ internal sealed class SelectionPayload
     public string prompt { get; init; } = string.Empty;
 
     public SelectionCardPayload[] cards { get; init; } = Array.Empty<SelectionCardPayload>();
+}
+
+internal sealed class ChestPayload
+{
+    public bool is_opened { get; init; }
+
+    public bool has_relic_been_claimed { get; init; }
+
+    public ChestRelicOptionPayload[] relic_options { get; init; } = Array.Empty<ChestRelicOptionPayload>();
+}
+
+internal sealed class ChestRelicOptionPayload
+{
+    public int index { get; init; }
+
+    public string relic_id { get; init; } = string.Empty;
+
+    public string name { get; init; } = string.Empty;
+
+    public string rarity { get; init; } = string.Empty;
 }
 
 internal sealed class MapCoordPayload

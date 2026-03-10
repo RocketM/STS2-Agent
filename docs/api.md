@@ -125,6 +125,7 @@
 | `map` | object \| null | 地图状态（仅地图界面存在） |
 | `reward` | object \| null | 奖励状态（仅奖励界面存在） |
 | `selection` | object \| null | 选牌状态（仅选牌界面存在） |
+| `chest` | object \| null | 宝箱状态（仅宝箱房存在） |
 | `event` | null | 事件状态（暂未实现） |
 | `shop` | null | 商店状态（暂未实现） |
 | `rest` | null | 休息点状态（暂未实现） |
@@ -313,6 +314,25 @@
 | `upgraded` | boolean | 是否已升级 |
 | `card_type` | string | 卡牌类型 |
 | `rarity` | string | 稀有度 |
+
+### `chest` 子结构
+
+当 `screen` 为 `CHEST` 时存在。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `is_opened` | boolean | 宝箱是否已打开 |
+| `has_relic_been_claimed` | boolean | 是否已选择遗物 |
+| `relic_options[]` | object[] | 可选遗物列表（宝箱打开后才有内容） |
+
+#### `chest.relic_options[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `choose_treasure_relic` 的 `option_index` |
+| `relic_id` | string | 遗物内部 ID |
+| `name` | string | 遗物名称 |
+| `rarity` | string | 稀有度（`Common`, `Uncommon`, `Rare` 等） |
 
 ### 状态示例：战斗中
 
@@ -833,6 +853,40 @@
 }
 ```
 
+### `open_chest`
+
+打开宝箱房中的宝箱，触发开箱动画并展示可选遗物。
+
+- **前提**：`screen` = `CHEST`，宝箱尚未打开（`chest.is_opened` = false）
+- **参数**：无
+- **稳定条件**：界面切换至遗物选择子界面（`NTreasureRoomRelicCollection`）
+- **超时**：10 秒
+
+```
+请求: { "action": "open_chest" }
+```
+
+### `choose_treasure_relic`
+
+从打开的宝箱中选择一个遗物。
+
+- **前提**：`screen` = `CHEST`，宝箱已打开，`chest.relic_options` 非空
+- **参数**：
+
+```json
+{
+  "action": "choose_treasure_relic",
+  "option_index": 0
+}
+```
+
+| 字段 | 必须 | 说明 |
+| --- | --- | --- |
+| `option_index` | 是 | `chest.relic_options[]` 的索引 |
+
+- **稳定条件**：遗物被授予，界面回到宝箱房主界面
+- **超时**：10 秒
+
 ### `proceed`
 
 点击当前界面的"继续"按钮。
@@ -875,6 +929,17 @@
     POST /action { proceed }                       → 继续（如果有按钮）
 3. GET /state                          → screen=MAP
 4. POST /action { choose_map_node, option_index=0 }  → 选路
+```
+
+### 宝箱房
+
+```
+1. GET /state                          → screen=CHEST, chest.is_opened=false
+2. POST /action { open_chest }         → 打开宝箱，等待遗物展示
+3. GET /state                          → chest.relic_options[] 列出可选遗物
+4. POST /action { choose_treasure_relic, option_index=0 }  → 选择遗物
+5. GET /state                          → chest.has_relic_been_claimed=true
+6. POST /action { proceed }            → 继续到地图
 ```
 
 ---

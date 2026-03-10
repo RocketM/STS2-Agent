@@ -147,6 +147,25 @@ class Sts2Client:
             },
         )
 
+    def open_chest(self) -> dict[str, Any]:
+        return self.execute_action(
+            "open_chest",
+            client_context={
+                "source": "mcp",
+                "tool_name": "open_chest",
+            },
+        )
+
+    def choose_treasure_relic(self, option_index: int) -> dict[str, Any]:
+        return self.execute_action(
+            "choose_treasure_relic",
+            option_index=option_index,
+            client_context={
+                "source": "mcp",
+                "tool_name": "choose_treasure_relic",
+            },
+        )
+
     def execute_action(
         self,
         action: str,

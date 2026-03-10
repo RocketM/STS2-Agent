@@ -36,7 +36,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | Phase 1C | 最小纵切 | 已完成 |
 | Phase 2 | 战斗状态提取 | 已完成 |
 | Phase 3 | 战斗动作执行 | 已完成 |
-| Phase 4A | 地图 / 奖励 / 宝箱 | 代码已完成，部分已实机验证 |
+| Phase 4A | 地图 / 奖励 / 宝箱 | 代码已完成（含宝箱 relic 选择），部分已实机验证 |
 | Phase 4B | 事件 / 休息点 | 未开始 |
 | Phase 4C | 商店 | 未开始 |
 | Phase 5 | MCP 完整化 | 基础已完成，随 4B/4C 同步扩展 |
@@ -68,6 +68,8 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `collect_rewards_and_proceed` | 已验证 |
 | `skip_reward_cards` | 待验证 |
 | `select_deck_card` | 待验证 |
+| `open_chest` | 代码已完成，待验证 |
+| `choose_treasure_relic` | 代码已完成，待验证 |
 
 ### 已实现状态字段
 
@@ -78,6 +80,7 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 | `map.current_node` / `map.available_nodes` | 已验证 |
 | `map.rows` / `map.cols` / `map.starting_node` / `map.boss_node` / `map.second_boss_node` / `map.nodes` | 已实现，待实机验证 |
 | `reward.*` / `selection.*` | 已实现，部分已验证 |
+| `chest.is_opened` / `chest.has_relic_been_claimed` / `chest.relic_options` | 代码已完成，待验证 |
 | `event` | 仍为 `null` |
 | `shop` | 仍为 `null` |
 | `rest` | 仍为 `null` |
@@ -99,6 +102,8 @@ Claude 每完成一个功能阶段，向 Codex 提交具体 diff 或文件进行
 - `select_deck_card`
 - `collect_rewards_and_proceed`
 - `proceed`
+- `open_chest`
+- `choose_treasure_relic`
 
 ---
 

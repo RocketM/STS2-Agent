@@ -51,6 +51,7 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             combat.enemies[] – enemy index, hp, block, intent, is_alive.
             run – deck, relics, potions, gold, hp.
             map – current_node, available_nodes[].
+            chest – is_opened, has_relic_been_claimed, relic_options[].
             reward – pending_card_choice, rewards[], card_options[], alternatives[].
             selection – kind, prompt, cards[] (e.g. card removal screen).
 
@@ -255,6 +256,51 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
             invalid_target – option_index out of range.
         """
         return sts2.select_deck_card(option_index=option_index)
+
+    @mcp.tool
+    def open_chest() -> dict[str, Any]:
+        """Open the treasure chest in a chest room.
+
+        Triggers the chest-opening animation and reveals the available relics.
+        After this call, the screen transitions from NTreasureRoom to the relic
+        selection sub-screen. Use choose_treasure_relic to pick a relic next.
+
+        Preconditions:
+            - screen is CHEST.
+            - available_actions includes "open_chest".
+            - The chest has not been opened yet (chest.is_opened is false).
+
+        Returns updated game state in data.state with chest.relic_options[]
+        populated.
+
+        Common errors:
+            invalid_action – not in a chest room or chest already opened.
+        """
+        return sts2.open_chest()
+
+    @mcp.tool
+    def choose_treasure_relic(option_index: int) -> dict[str, Any]:
+        """Choose a relic from the opened treasure chest.
+
+        Args:
+            option_index: zero-based index into chest.relic_options[].
+
+        Preconditions:
+            - screen is CHEST.
+            - available_actions includes "choose_treasure_relic".
+            - chest.relic_options is non-empty (chest has been opened).
+
+        After choosing, the relic is awarded and the proceed button becomes
+        available. Call proceed to continue to the map.
+
+        Returns updated game state in data.state.
+
+        Common errors:
+            invalid_action – chest not opened or relics not available.
+            invalid_request – option_index missing.
+            invalid_target – option_index out of range.
+        """
+        return sts2.choose_treasure_relic(option_index=option_index)
 
     @mcp.tool
     def proceed() -> dict[str, Any]:

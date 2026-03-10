@@ -13,6 +13,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Map;
 using MegaCrit.Sts2.Core.Nodes.Screens.Overlays;
 using MegaCrit.Sts2.Core.Nodes.Screens.ScreenContext;
+using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
+using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
@@ -40,6 +42,8 @@ internal static class GameActionService
             "skip_reward_cards" => ExecuteSkipRewardCardsAsync(),
             "select_deck_card" => ExecuteSelectDeckCardAsync(request),
             "proceed" => ExecuteProceedAsync(),
+            "open_chest" => ExecuteOpenChestAsync(),
+            "choose_treasure_relic" => ExecuteChooseTreasureRelicAsync(request),
             _ => throw new ApiException(409, "invalid_action", "Action is not supported yet.", new
             {
                 action = request.action
@@ -938,6 +942,120 @@ internal static class GameActionService
 
             if (!GodotObject.IsInstanceValid(screen) ||
                 ActiveScreenContext.Instance.GetCurrentScreen() is not NDeckCardSelectScreen)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteOpenChestAsync()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+
+        if (currentScreen is not NTreasureRoom treasureRoom || !GameStateService.CanOpenChest(currentScreen))
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "open_chest",
+                screen
+            });
+        }
+
+        var chestButton = treasureRoom.GetNodeOrNull<NButton>("%Chest")
+            ?? throw new ApiException(503, "state_unavailable", "Chest button not found.", new
+            {
+                action = "open_chest",
+                screen
+            }, retryable: true);
+
+        chestButton.ForceClick();
+        var stable = await WaitForChestOpenTransitionAsync(TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "open_chest",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<bool> WaitForChestOpenTransitionAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (currentScreen is NTreasureRoomRelicCollection)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteChooseTreasureRelicAsync(ActionRequest request)
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        var screen = GameStateService.ResolveScreen(currentScreen);
+
+        if (!GameStateService.CanChooseTreasureRelic(currentScreen))
+        {
+            throw new ApiException(409, "invalid_action", "Action is not available in the current state.", new
+            {
+                action = "choose_treasure_relic",
+                screen
+            });
+        }
+
+        if (request.option_index == null)
+        {
+            throw new ApiException(400, "invalid_request", "choose_treasure_relic requires option_index.", new
+            {
+                action = "choose_treasure_relic"
+            });
+        }
+
+        var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
+        if (relics == null || request.option_index < 0 || request.option_index >= relics.Count)
+        {
+            throw new ApiException(409, "invalid_target", "option_index is out of range.", new
+            {
+                action = "choose_treasure_relic",
+                option_index = request.option_index,
+                relic_count = relics?.Count ?? 0
+            });
+        }
+
+        RunManager.Instance.TreasureRoomRelicSynchronizer.PickRelicLocally(request.option_index.Value);
+        var stable = await WaitForRelicPickTransitionAsync(TimeSpan.FromSeconds(10));
+
+        return new ActionResponsePayload
+        {
+            action = "choose_treasure_relic",
+            status = stable ? "completed" : "pending",
+            stable = stable,
+            message = stable ? "Action completed." : "Action queued but state is still transitioning.",
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static async Task<bool> WaitForRelicPickTransitionAsync(TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            await WaitForNextFrameAsync();
+
+            var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+            if (currentScreen is not NTreasureRoomRelicCollection)
             {
                 return true;
             }
