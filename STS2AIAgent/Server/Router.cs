@@ -1,6 +1,7 @@
 using System.Net;
 using System.Diagnostics;
 using System.Text;
+using System.Threading;
 using MegaCrit.Sts2.Core.Debug;
 using MegaCrit.Sts2.Core.Logging;
 using STS2AIAgent.Game;
@@ -14,9 +15,12 @@ internal static class Router
     private const string ModVersion = "0.1.0";
     private const string LogPrefix = "[STS2AIAgent.Router]";
 
+    private static long _requestCounter;
+
     public static async Task HandleAsync(HttpListenerContext context, CancellationToken cancellationToken)
     {
-        var requestId = $"req_{DateTime.UtcNow:yyyyMMdd_HHmmss_ffff}";
+        var seq = Interlocked.Increment(ref _requestCounter);
+        var requestId = $"req_{DateTime.UtcNow:yyyyMMdd_HHmmss_ffff}_{seq}";
         var request = context.Request;
         var response = context.Response;
         var stopwatch = Stopwatch.StartNew();
@@ -127,7 +131,7 @@ internal static class Router
         return WriteJsonAsync(response, statusCode, new
         {
             ok = false,
-            request_id = requestId ?? $"req_{DateTime.UtcNow:yyyyMMdd_HHmmss_ffff}",
+            request_id = requestId ?? $"req_{DateTime.UtcNow:yyyyMMdd_HHmmss_ffff}_{Interlocked.Increment(ref _requestCounter)}",
             error = new
             {
                 code,

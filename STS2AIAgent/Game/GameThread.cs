@@ -46,11 +46,17 @@ internal static class GameThread
         {
             try
             {
-                completionSource.SetResult(action());
+                if (!completionSource.TrySetResult(action()))
+                {
+                    Log.Warn($"{LogPrefix} InvokeAsync completion source was already completed.");
+                }
             }
             catch (Exception ex)
             {
-                completionSource.SetException(ex);
+                if (!completionSource.TrySetException(ex))
+                {
+                    Log.Warn($"{LogPrefix} Failed to propagate InvokeAsync exception because the completion source was already completed: {ex}");
+                }
             }
         }, null);
 
@@ -70,18 +76,27 @@ internal static class GameThread
         }
 
         var completionSource = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _syncContext.Post(async _ =>
-        {
-            try
-            {
-                completionSource.SetResult(await action());
-            }
-            catch (Exception ex)
-            {
-                completionSource.SetException(ex);
-            }
-        }, null);
+        _syncContext.Post(_ => _ = InvokeAsyncCoreAsync(action, completionSource), null);
 
         return completionSource.Task;
+    }
+
+    private static async Task InvokeAsyncCoreAsync<T>(Func<Task<T>> action, TaskCompletionSource<T> completionSource)
+    {
+        try
+        {
+            var result = await action().ConfigureAwait(false);
+            if (!completionSource.TrySetResult(result))
+            {
+                Log.Warn($"{LogPrefix} InvokeAsync async completion source was already completed.");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!completionSource.TrySetException(ex))
+            {
+                Log.Warn($"{LogPrefix} Failed to propagate InvokeAsync async exception because the completion source was already completed: {ex}");
+            }
+        }
     }
 }

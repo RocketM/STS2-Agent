@@ -946,9 +946,31 @@ internal static class GameActionService
         return false;
     }
 
+    /// <summary>
+    /// Waits for the next game frame via Godot's ProcessFrame signal.
+    /// When NGame or SceneTree is unavailable (e.g. during shutdown),
+    /// falls back to Task.Delay WITHOUT ConfigureAwait(false) to preserve
+    /// the game thread's SynchronizationContext. This is critical — using
+    /// ConfigureAwait(false) would cause subsequent loop iterations to run
+    /// on a thread-pool thread, breaking Godot object access safety.
+    /// </summary>
     private static async Task WaitForNextFrameAsync()
     {
-        await NGame.Instance!.ToSignal(NGame.Instance.GetTree(), SceneTree.SignalName.ProcessFrame);
+        var game = NGame.Instance;
+        if (game == null || !GodotObject.IsInstanceValid(game))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(16));
+            return;
+        }
+
+        var tree = game.GetTree();
+        if (tree == null || !GodotObject.IsInstanceValid(tree))
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(16));
+            return;
+        }
+
+        await game.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
     }
 }
 
@@ -977,3 +999,4 @@ internal sealed class ActionResponsePayload
 
     public GameStatePayload state { get; init; } = new();
 }
+

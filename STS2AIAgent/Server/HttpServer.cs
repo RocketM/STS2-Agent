@@ -41,6 +41,73 @@ public sealed class HttpServer
         }
     }
 
+    public void Stop()
+    {
+        HttpListener? listener;
+        CancellationTokenSource? cts;
+        Task? listenLoopTask;
+
+        lock (_gate)
+        {
+            if (_listener == null && _cts == null && _listenLoopTask == null)
+            {
+                return;
+            }
+
+            listener = _listener;
+            cts = _cts;
+            listenLoopTask = _listenLoopTask;
+            _listener = null;
+            _cts = null;
+            _listenLoopTask = null;
+        }
+
+        try
+        {
+            cts?.Cancel();
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"{LogPrefix} Failed to cancel listener token: {ex}");
+        }
+
+        try
+        {
+            if (listener?.IsListening == true)
+            {
+                listener.Stop();
+            }
+        }
+        catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
+        {
+            Log.Info($"{LogPrefix} Listener stop completed with shutdown exception: {ex.Message}");
+        }
+
+        try
+        {
+            listener?.Close();
+        }
+        catch (Exception ex) when (ex is HttpListenerException or ObjectDisposedException)
+        {
+            Log.Info($"{LogPrefix} Listener close completed with shutdown exception: {ex.Message}");
+        }
+
+        try
+        {
+            listenLoopTask?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(inner => inner is OperationCanceledException or HttpListenerException or ObjectDisposedException))
+        {
+            Log.Info($"{LogPrefix} Listener loop stopped during shutdown.");
+        }
+        finally
+        {
+            cts?.Dispose();
+        }
+
+        Log.Info($"{LogPrefix} Stopped");
+    }
+
     private static async Task ListenLoopAsync(HttpListener listener, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -52,7 +119,7 @@ public sealed class HttpServer
                 context = await listener.GetContextAsync();
                 _ = Task.Run(() => Router.HandleAsync(context, cancellationToken), cancellationToken);
             }
-            catch (HttpListenerException) when (cancellationToken.IsCancellationRequested)
+            catch (HttpListenerException) when (cancellationToken.IsCancellationRequested || !listener.IsListening)
             {
                 break;
             }

@@ -8,3 +8,12 @@ extraction/decompiled/
 mcp_server/.venv/
 __pycache__/
 *.pyc
+
+# BMad Method V6
+_bmad/
+_bmad-output/
+
+# Dev tooling
+.claude/
+.serena/
+node_modules/

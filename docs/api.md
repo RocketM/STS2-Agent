@@ -1,7 +1,9 @@
-# STS2 AI Agent Mod HTTP API
+# STS2 AI Agent Mod — HTTP API
 
-状态：草案，可实现  
+状态：可实现
 协议版本：`2026-03-10-v0`
+
+---
 
 ## 约束
 
@@ -10,77 +12,88 @@
 - 响应类型固定为 `application/json; charset=utf-8`
 - 新增字段必须向后兼容，不删除既有字段
 
-## 通用响应
+---
 
-成功响应：
+## 通用响应格式
+
+### 成功
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0001",
-  "data": {}
+  "request_id": "req_20260310_120000_1234",
+  "data": { ... }
 }
 ```
 
-失败响应：
+### 失败
 
 ```json
 {
   "ok": false,
-  "request_id": "req_20260310_0001",
+  "request_id": "req_20260310_120000_1234",
   "error": {
     "code": "invalid_action",
     "message": "Action is not available in the current state.",
-    "details": {
-      "action": "end_turn",
-      "screen": "MAP"
-    },
+    "details": { "action": "end_turn", "screen": "MAP" },
     "retryable": false
   }
 }
 ```
 
+---
+
 ## 错误码
 
-| 错误码 | 含义 |
-| --- | --- |
-| `unknown_error` | 未分类错误 |
-| `invalid_request` | 请求体不合法 |
-| `invalid_action` | 当前状态下不能执行该动作 |
-| `invalid_target` | 目标或索引非法 |
-| `state_unavailable` | 当前状态暂时不可安全读取 |
-| `internal_error` | 服务内部异常 |
+| 错误码 | HTTP 状态码 | 含义 | 可重试 |
+| --- | --- | --- | --- |
+| `invalid_request` | 400 | 请求体缺少必要字段或格式非法 | 否 |
+| `not_found` | 404 | 路由不存在 | 否 |
+| `invalid_action` | 409 | 当前状态下不能执行该动作 | 否 |
+| `invalid_target` | 409 | 目标索引超出范围 | 否 |
+| `state_unavailable` | 503 | 游戏状态暂时不可安全读取（如正在过渡） | 是 |
+| `internal_error` | 500 | 服务内部异常 | 否 |
+
+---
 
 ## Screen 枚举
 
-- `UNKNOWN`
-- `MAIN_MENU`
-- `CHARACTER_SELECT`
-- `MAP`
-- `COMBAT`
-- `EVENT`
-- `SHOP`
-- `REST`
-- `REWARD`
-- `CHEST`
-- `CARD_SELECTION`
-- `GAME_OVER`
+| 值 | 含义 |
+| --- | --- |
+| `MAIN_MENU` | 主菜单、补丁说明、子菜单、Logo 动画 |
+| `CHARACTER_SELECT` | 角色选择界面 |
+| `MAP` | 地图界面 |
+| `COMBAT` | 战斗中 |
+| `EVENT` | 事件交互（暂未实现状态提取） |
+| `SHOP` | 商店（暂未实现状态提取） |
+| `REST` | 休息点（暂未实现状态提取） |
+| `REWARD` | 奖励结算 / 卡牌奖励选择 |
+| `CHEST` | 宝箱房 |
+| `CARD_SELECTION` | 牌库选牌界面（删牌等） |
+| `GAME_OVER` | 游戏结束（暂未实现状态提取） |
+| `UNKNOWN` | 无法识别的界面 |
 
 ## Action Status
 
-- `completed`
-- `pending`
-- `rejected`
-- `failed`
+动作执行后的 `status` 字段：
+
+| 值 | 含义 |
+| --- | --- |
+| `completed` | 动作已完成，返回的 `state` 已稳定 |
+| `pending` | 动作已提交，但游戏状态尚在过渡中（等待动画/队列清空） |
+
+---
 
 ## `GET /health`
 
-作用：返回 Mod 基础状态。
+返回 Mod 基础状态。用于确认游戏正在运行且 Mod 已加载。
+
+### 响应示例
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0001",
+  "request_id": "req_20260310_120000_1234",
   "data": {
     "service": "sts2-ai-agent",
     "mod_version": "0.1.0",
@@ -91,55 +104,284 @@
 }
 ```
 
+---
+
 ## `GET /state`
 
-作用：返回当前最小状态快照。
+返回当前游戏状态的完整快照。这是 AI Agent 做出决策前最重要的端点。
 
-关键字段：
+### 顶层字段
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `state_version` | number | 状态模型版本 |
-| `run_id` | string | 本局运行标识 |
-| `screen` | string | 当前逻辑界面 |
+| `state_version` | number | 状态模型版本（当前固定为 1） |
+| `run_id` | string | 本局运行标识（种子字符串） |
+| `screen` | string | 当前逻辑界面（见 Screen 枚举） |
 | `in_combat` | boolean | 是否处于战斗流程 |
-| `turn` | number or null | 当前回合数 |
-| `available_actions` | string[] | 当前可执行动作名 |
-| `run.gold` | number or null | 当前金币 |
-| `run.deck` | object[] or null | 当前牌库 |
-| `run.relics` | object[] or null | 当前遗物 |
-| `run.potions` | object[] or null | 当前药水槽 |
-| `map.current_node` | object or null | 当前地图坐标 |
-| `map.available_nodes` | object[] or null | 当前这一步可走节点 |
-| `map.rows` | number or null | 地图总行数 |
-| `map.cols` | number or null | 地图总列数 |
-| `map.starting_node` | object or null | 地图起点 |
-| `map.boss_node` | object or null | Boss 节点 |
-| `map.second_boss_node` | object or null | 双 Boss Act 的第二个 Boss 节点 |
-| `map.nodes` | object[] or null | 完整地图图结构，含父子连线 |
-| `reward.rewards` | object[] | 奖励按钮列表 |
-| `reward.card_options` | object[] | 卡牌奖励候选 |
-| `reward.alternatives` | object[] | 卡牌奖励替代动作，例如跳过 |
-| `selection.cards` | object[] or null | 牌库选牌界面候选 |
+| `turn` | number \| null | 当前回合数（非战斗时为 null） |
+| `available_actions` | string[] | 当前可执行动作名列表 |
+| `combat` | object \| null | 战斗状态（仅战斗中存在） |
+| `run` | object \| null | 本局运行状态 |
+| `map` | object \| null | 地图状态（仅地图界面存在） |
+| `reward` | object \| null | 奖励状态（仅奖励界面存在） |
+| `selection` | object \| null | 选牌状态（仅选牌界面存在） |
+| `event` | null | 事件状态（暂未实现） |
+| `shop` | null | 商店状态（暂未实现） |
+| `rest` | null | 休息点状态（暂未实现） |
+| `game_over` | null | 游戏结束状态（暂未实现） |
 
-### 战斗示例
+### `combat` 子结构
+
+#### `combat.player`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `current_hp` | number | 当前生命值 |
+| `max_hp` | number | 最大生命值 |
+| `block` | number | 当前格挡值 |
+| `energy` | number | 当前能量 |
+| `stars` | number | 当前星星数 |
+
+#### `combat.hand[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 手牌索引（用于 `play_card` 的 `card_index`） |
+| `card_id` | string | 卡牌内部 ID |
+| `name` | string | 卡牌显示名称 |
+| `upgraded` | boolean | 是否已升级 |
+| `target_type` | string | 目标类型枚举（`None`, `AnyEnemy`, `AnyAlly` 等） |
+| `requires_target` | boolean | 是否需要指定目标 |
+| `costs_x` | boolean | 是否为 X 费卡 |
+| `energy_cost` | number | 能量消耗（含修正） |
+| `star_cost` | number | 星星消耗（含修正） |
+| `playable` | boolean | **当前是否可打出** |
+| `unplayable_reason` | string \| null | 不可打出原因（`not_enough_energy`, `not_enough_stars`, `no_living_allies`, `blocked_by_hook`, `unplayable`） |
+
+#### `combat.enemies[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 敌人索引（用于 `play_card` 的 `target_index`） |
+| `enemy_id` | string | 敌人内部 ID |
+| `name` | string | 敌人显示名称 |
+| `current_hp` | number | 当前生命值 |
+| `max_hp` | number | 最大生命值 |
+| `block` | number | 当前格挡值 |
+| `is_alive` | boolean | 是否存活 |
+| `is_hittable` | boolean | 是否可被攻击 |
+| `intent` | string \| null | 意图 ID（如有） |
+
+### `run` 子结构
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `current_hp` | number | 当前生命值 |
+| `max_hp` | number | 最大生命值 |
+| `gold` | number | 当前金币 |
+| `max_energy` | number | 基础最大能量 |
+| `deck[]` | object[] | 当前牌库 |
+| `relics[]` | object[] | 当前遗物 |
+| `potions[]` | object[] | 当前药水槽 |
+
+#### `run.deck[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 牌库中的索引 |
+| `card_id` | string | 卡牌内部 ID |
+| `name` | string | 卡牌名称 |
+| `upgraded` | boolean | 是否已升级 |
+| `card_type` | string | 类型（`Attack`, `Skill`, `Power`, `Status`, `Curse`） |
+| `rarity` | string | 稀有度（`Starter`, `Common`, `Uncommon`, `Rare`） |
+| `energy_cost` | number | 能量消耗 |
+| `star_cost` | number | 星星消耗 |
+
+#### `run.relics[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 遗物索引 |
+| `relic_id` | string | 遗物内部 ID |
+| `name` | string | 遗物名称 |
+| `is_melted` | boolean | 是否已熔炼 |
+
+#### `run.potions[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 药水槽索引 |
+| `potion_id` | string \| null | 药水 ID（空槽为 null） |
+| `name` | string \| null | 药水名称（空槽为 null） |
+| `occupied` | boolean | 是否有药水 |
+
+### `map` 子结构
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `current_node` | object \| null | 当前所在坐标 `{ row, col }` |
+| `is_travel_enabled` | boolean | 地图是否允许移动 |
+| `is_traveling` | boolean | 是否正在移动中 |
+| `map_generation_count` | number | 地图生成计数 |
+| `rows` | number | 地图总行数 |
+| `cols` | number | 地图总列数 |
+| `starting_node` | object \| null | 起点坐标 `{ row, col }` |
+| `boss_node` | object \| null | Boss 坐标 `{ row, col }` |
+| `second_boss_node` | object \| null | 双 Boss Act 的第二个 Boss |
+| `available_nodes[]` | object[] | 当前可前往的节点 |
+| `nodes[]` | object[] | 完整地图图结构 |
+
+#### `map.available_nodes[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `choose_map_node` 的 `option_index` |
+| `row` | number | 行坐标 |
+| `col` | number | 列坐标 |
+| `node_type` | string | 节点类型（`Monster`, `Elite`, `Boss`, `Rest`, `Shop`, `Event`, `Treasure` 等） |
+| `state` | string | 节点状态（`Travelable`, `Traveled` 等） |
+
+#### `map.nodes[]`
+
+完整图结构，用于路线规划。`available_nodes` 仅用于执行当前一步。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `row` | number | 行坐标 |
+| `col` | number | 列坐标 |
+| `node_type` | string | 节点类型 |
+| `state` | string | 节点状态 |
+| `visited` | boolean | 是否已访问 |
+| `is_current` | boolean | 是否为当前节点 |
+| `is_available` | boolean | 是否为当前可前往节点 |
+| `is_start` | boolean | 是否为起点 |
+| `is_boss` | boolean | 是否为 Boss 节点 |
+| `is_second_boss` | boolean | 是否为第二 Boss 节点 |
+| `parents[]` | object[] | 父节点坐标列表 `[{ row, col }]` |
+| `children[]` | object[] | 子节点坐标列表 `[{ row, col }]` |
+
+### `reward` 子结构
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `pending_card_choice` | boolean | 是否正在卡牌奖励选择子界面 |
+| `can_proceed` | boolean | 是否可点击继续 |
+| `rewards[]` | object[] | 奖励按钮列表（主奖励界面） |
+| `card_options[]` | object[] | 卡牌奖励候选（卡牌选择子界面） |
+| `alternatives[]` | object[] | 替代按钮（如"跳过"） |
+
+#### `reward.rewards[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `claim_reward` 的 `option_index` |
+| `reward_type` | string | 奖励类型（`Gold`, `Card`, `Potion`, `Relic`, `RemoveCard`, `SpecialCard`, `LinkedRewardSet`） |
+| `description` | string | 奖励描述文本 |
+| `claimable` | boolean | 是否可领取 |
+
+#### `reward.card_options[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `choose_reward_card` 的 `option_index` |
+| `card_id` | string | 卡牌 ID |
+| `name` | string | 卡牌名称 |
+| `upgraded` | boolean | 是否已升级 |
+
+#### `reward.alternatives[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 替代按钮索引 |
+| `label` | string | 按钮文字（如"跳过"） |
+
+### `selection` 子结构
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `kind` | string | 选牌类型（当前为 `"deck_card_select"`） |
+| `prompt` | string | 提示文字（如"选择一张牌移除"） |
+| `cards[]` | object[] | 可选卡牌列表 |
+
+#### `selection.cards[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 用于 `select_deck_card` 的 `option_index` |
+| `card_id` | string | 卡牌 ID |
+| `name` | string | 卡牌名称 |
+| `upgraded` | boolean | 是否已升级 |
+| `card_type` | string | 卡牌类型 |
+| `rarity` | string | 稀有度 |
+
+### 状态示例：战斗中
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0002",
+  "request_id": "req_20260310_120000_1234",
   "data": {
     "state_version": 1,
     "run_id": "WXJVZBQFK2",
     "screen": "COMBAT",
     "in_combat": true,
     "turn": 1,
-    "available_actions": [
-      "end_turn",
-      "play_card"
-    ],
+    "available_actions": ["end_turn", "play_card"],
+    "combat": {
+      "player": {
+        "current_hp": 72,
+        "max_hp": 80,
+        "block": 0,
+        "energy": 3,
+        "stars": 0
+      },
+      "hand": [
+        {
+          "index": 0,
+          "card_id": "STRIKE_IRONCLAD",
+          "name": "打击",
+          "upgraded": false,
+          "target_type": "AnyEnemy",
+          "requires_target": true,
+          "costs_x": false,
+          "energy_cost": 1,
+          "star_cost": 0,
+          "playable": true,
+          "unplayable_reason": null
+        },
+        {
+          "index": 1,
+          "card_id": "DEFEND_IRONCLAD",
+          "name": "防御",
+          "upgraded": false,
+          "target_type": "None",
+          "requires_target": false,
+          "costs_x": false,
+          "energy_cost": 1,
+          "star_cost": 0,
+          "playable": true,
+          "unplayable_reason": null
+        }
+      ],
+      "enemies": [
+        {
+          "index": 0,
+          "enemy_id": "CULTIST",
+          "name": "邪教徒",
+          "current_hp": 50,
+          "max_hp": 50,
+          "block": 0,
+          "is_alive": true,
+          "is_hittable": true,
+          "intent": "ATTACK"
+        }
+      ]
+    },
     "run": {
+      "current_hp": 72,
+      "max_hp": 80,
       "gold": 99,
+      "max_energy": 3,
       "deck": [
         {
           "index": 0,
@@ -159,23 +401,42 @@
           "name": "燃烧之血",
           "is_melted": false
         }
+      ],
+      "potions": [
+        {
+          "index": 0,
+          "potion_id": "FIRE_POTION",
+          "name": "火焰药水",
+          "occupied": true
+        },
+        {
+          "index": 1,
+          "potion_id": null,
+          "name": null,
+          "occupied": false
+        }
       ]
-    }
+    },
+    "map": null,
+    "selection": null,
+    "event": null,
+    "shop": null,
+    "rest": null,
+    "reward": null,
+    "game_over": null
   }
 }
 ```
 
-### 地图示例
+### 状态示例：地图界面
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0008",
+  "request_id": "req_20260310_120001_5678",
   "data": {
     "screen": "MAP",
-    "available_actions": [
-      "choose_map_node"
-    ],
+    "available_actions": ["choose_map_node"],
     "map": {
       "current_node": { "row": 1, "col": 3 },
       "starting_node": { "row": 0, "col": 3 },
@@ -183,12 +444,22 @@
       "second_boss_node": null,
       "rows": 15,
       "cols": 7,
+      "is_travel_enabled": true,
+      "is_traveling": false,
+      "map_generation_count": 1,
       "available_nodes": [
         {
           "index": 0,
           "row": 2,
           "col": 2,
           "node_type": "Monster",
+          "state": "Travelable"
+        },
+        {
+          "index": 1,
+          "row": 2,
+          "col": 4,
+          "node_type": "Event",
           "state": "Travelable"
         }
       ],
@@ -205,7 +476,7 @@
           "is_boss": false,
           "is_second_boss": false,
           "parents": [{ "row": 0, "col": 3 }],
-          "children": [{ "row": 2, "col": 2 }]
+          "children": [{ "row": 2, "col": 2 }, { "row": 2, "col": 4 }]
         }
       ]
     }
@@ -213,18 +484,54 @@
 }
 ```
 
-### 奖励示例
+### 状态示例：奖励主界面
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0006",
+  "request_id": "req_20260310_120002_9012",
   "data": {
     "screen": "REWARD",
-    "available_actions": [
-      "choose_reward_card",
-      "skip_reward_cards"
-    ],
+    "available_actions": ["claim_reward", "collect_rewards_and_proceed"],
+    "reward": {
+      "pending_card_choice": false,
+      "can_proceed": true,
+      "rewards": [
+        {
+          "index": 0,
+          "reward_type": "Gold",
+          "description": "获得 25 金币",
+          "claimable": true
+        },
+        {
+          "index": 1,
+          "reward_type": "Card",
+          "description": "选择一张卡牌",
+          "claimable": true
+        },
+        {
+          "index": 2,
+          "reward_type": "Potion",
+          "description": "获得火焰药水",
+          "claimable": true
+        }
+      ],
+      "card_options": [],
+      "alternatives": []
+    }
+  }
+}
+```
+
+### 状态示例：卡牌奖励选择
+
+```json
+{
+  "ok": true,
+  "request_id": "req_20260310_120003_3456",
+  "data": {
+    "screen": "REWARD",
+    "available_actions": ["choose_reward_card", "skip_reward_cards"],
     "reward": {
       "pending_card_choice": true,
       "can_proceed": false,
@@ -234,6 +541,18 @@
           "index": 0,
           "card_id": "POMMEL_STRIKE",
           "name": "剑柄打击",
+          "upgraded": false
+        },
+        {
+          "index": 1,
+          "card_id": "SHRUG_IT_OFF",
+          "name": "耸肩",
+          "upgraded": false
+        },
+        {
+          "index": 2,
+          "card_id": "CARNAGE",
+          "name": "大屠杀",
           "upgraded": false
         }
       ],
@@ -248,17 +567,15 @@
 }
 ```
 
-### 删牌界面示例
+### 状态示例：删牌界面
 
 ```json
 {
   "ok": true,
-  "request_id": "req_20260310_0007",
+  "request_id": "req_20260310_120004_7890",
   "data": {
     "screen": "CARD_SELECTION",
-    "available_actions": [
-      "select_deck_card"
-    ],
+    "available_actions": ["select_deck_card"],
     "selection": {
       "kind": "deck_card_select",
       "prompt": "选择一张牌移除",
@@ -270,6 +587,14 @@
           "upgraded": false,
           "card_type": "Attack",
           "rarity": "Starter"
+        },
+        {
+          "index": 1,
+          "card_id": "DEFEND_IRONCLAD",
+          "name": "防御",
+          "upgraded": false,
+          "card_type": "Skill",
+          "rarity": "Starter"
         }
       ]
     }
@@ -277,85 +602,291 @@
 }
 ```
 
+---
+
 ## `GET /actions/available`
 
-作用：返回当前状态下允许执行的动作描述。
+返回当前状态下允许执行的动作及其参数需求。
 
-说明：
+### 响应字段
 
-- `play_card.requires_target` 固定为 `false`，因为是否需要目标取决于具体卡牌
-- 调用方必须结合 `GET /state` 中 `combat.hand[index].requires_target` 决定是否传 `target_index`
-- `choose_map_node` 使用 `option_index` 选择 `map.available_nodes[index]`
-- 路线规划应基于 `map.nodes` 的全图父子连线；`map.available_nodes` 只用于执行当前一步
-- `choose_reward_card` 使用 `option_index` 选择 `reward.card_options[index]`
-- `claim_reward` 使用 `option_index` 选择 `reward.rewards[index]`
-- `select_deck_card` 使用 `option_index` 选择 `selection.cards[index]`
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `screen` | string | 当前界面 |
+| `actions[]` | object[] | 动作描述列表 |
 
-## `POST /action`
+#### `actions[]`
 
-作用：执行单个动作。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `name` | string | 动作名称 |
+| `requires_target` | boolean | 是否需要 `target_index` |
+| `requires_index` | boolean | 是否需要 `card_index` 或 `option_index` |
 
-请求体：
+### 响应示例
 
 ```json
 {
-  "action": "choose_reward_card",
-  "card_index": null,
-  "target_index": null,
-  "option_index": 1,
-  "client_context": {
-    "source": "mcp",
-    "tool_name": "choose_reward_card"
+  "ok": true,
+  "request_id": "req_20260310_120005_1111",
+  "data": {
+    "screen": "COMBAT",
+    "actions": [
+      {
+        "name": "end_turn",
+        "requires_target": false,
+        "requires_index": false
+      },
+      {
+        "name": "play_card",
+        "requires_target": false,
+        "requires_index": true
+      }
+    ]
   }
 }
 ```
 
-### 已实现动作
+> **注意**：`play_card.requires_target` 固定为 `false`。是否需要目标取决于具体卡牌的 `combat.hand[].requires_target` 字段。
 
-- `end_turn`
-- `play_card`
-- `choose_map_node`
-- `collect_rewards_and_proceed`
-- `claim_reward`
-- `choose_reward_card`
-- `skip_reward_cards`
-- `select_deck_card`
-- `proceed`
+---
 
-### `choose_reward_card`
+## `POST /action`
 
-- 前提：当前 `screen = "REWARD"` 且 `reward.pending_card_choice = true`
-- 参数：`option_index`
-- 行为：选择指定卡牌奖励
+执行单个游戏动作。
+
+### 请求体
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `action` | string | **必填**。动作名称 |
+| `card_index` | number \| null | 手牌索引（`play_card` 时使用） |
+| `target_index` | number \| null | 目标索引（需要指定目标的卡牌使用） |
+| `option_index` | number \| null | 选项索引（地图/奖励/选牌等使用） |
+| `client_context` | object \| null | 可选的客户端上下文（如调用来源标识） |
+
+### 通用响应结构（ActionResponsePayload）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `action` | string | 执行的动作名 |
+| `status` | string | `"completed"` 或 `"pending"` |
+| `stable` | boolean | 状态是否已稳定 |
+| `message` | string | 人类可读的结果描述 |
+| `state` | object | 执行后的最新游戏状态快照（同 `GET /state` 的 `data`） |
+
+---
+
+## 已实现动作详细说明
+
+### `end_turn`
+
+结束当前战斗回合。
+
+- **前提**：`screen = "COMBAT"`，处于玩家出牌阶段
+- **参数**：无
+- **稳定条件**：回合数变化 或 不再是玩家阶段 或 战斗已结束
+- **超时**：5 秒
+
+```
+请求: { "action": "end_turn" }
+```
+
+```json
+{
+  "ok": true,
+  "request_id": "req_20260310_120010_0001",
+  "data": {
+    "action": "end_turn",
+    "status": "completed",
+    "stable": true,
+    "message": "Action completed.",
+    "state": { "screen": "COMBAT", "turn": 2, "..." : "..." }
+  }
+}
+```
+
+### `play_card`
+
+打出当前手牌中的一张牌。
+
+- **前提**：`screen = "COMBAT"`，手牌中有 `playable = true` 的卡
+- **参数**：
+  - `card_index`（必填）：`combat.hand[]` 的索引
+  - `target_index`（条件必填）：当卡牌 `requires_target = true` 时，为 `combat.enemies[]` 的索引
+- **稳定条件**：卡牌离开手牌 且 玩家驱动的动作队列清空
+- **超时**：5 秒
+
+```json
+{
+  "action": "play_card",
+  "card_index": 0,
+  "target_index": 0
+}
+```
+
+**错误场景**：
+
+| 场景 | 错误码 | 说明 |
+| --- | --- | --- |
+| 缺少 `card_index` | `invalid_request` | "play_card requires card_index." |
+| `card_index` 越界 | `invalid_target` | "card_index is out of range." |
+| 卡牌需要目标但未传 `target_index` | `invalid_target` | "This card requires target_index." |
+| `target_index` 越界 | `invalid_target` | "target_index is out of range." |
+| 卡牌不可打出 | `invalid_action` | "Card cannot be played in the current state." |
+
+### `choose_map_node`
+
+在地图界面选择一个节点前往。
+
+- **前提**：`screen = "MAP"`，`map.available_nodes` 非空
+- **参数**：`option_index`（必填）：`map.available_nodes[]` 的索引
+- **稳定条件**：房间已进入 或 地图坐标发生变化 或 界面切换
+- **超时**：10 秒
+
+路线规划应基于 `map.nodes[]` 的全图父子连线；`map.available_nodes[]` 只用于执行当前一步。
+
+```json
+{
+  "action": "choose_map_node",
+  "option_index": 0
+}
+```
 
 ### `claim_reward`
 
-- 前提：当前 `screen = "REWARD"` 且 `reward.rewards` 非空
-- 参数：`option_index`
-- 行为：领取指定奖励按钮，常用于先进入卡牌奖励子界面
+在奖励主界面领取一个奖励。
+
+- **前提**：`screen = "REWARD"`，`reward.rewards[]` 中有 `claimable = true` 的项
+- **参数**：`option_index`（必填）：`reward.rewards[]` 中可领取项的索引
+- **行为**：点击奖励按钮。如果是卡牌奖励，界面会切换到卡牌选择子界面（`pending_card_choice = true`），此时应接着调用 `choose_reward_card` 或 `skip_reward_cards`
+- **稳定条件**：奖励按钮数量变化 或 界面切换
+- **超时**：10 秒
+
+```json
+{
+  "action": "claim_reward",
+  "option_index": 1
+}
+```
+
+### `choose_reward_card`
+
+在卡牌奖励子界面选择一张卡加入牌库。
+
+- **前提**：`screen = "REWARD"`，`reward.pending_card_choice = true`，`reward.card_options[]` 非空
+- **参数**：`option_index`（必填）：`reward.card_options[]` 的索引
+- **稳定条件**：离开卡牌选择子界面 或 卡牌数量变化
+- **超时**：10 秒
+
+```json
+{
+  "action": "choose_reward_card",
+  "option_index": 0
+}
+```
 
 ### `skip_reward_cards`
 
-- 前提：当前 `screen = "REWARD"` 且 `reward.alternatives` 非空
-- 参数：无
-- 行为：点击卡牌奖励界面的替代按钮，默认用于跳过拿牌
+在卡牌奖励子界面跳过拿牌。
 
-### `select_deck_card`
+- **前提**：`screen = "REWARD"`，`reward.pending_card_choice = true`，`reward.alternatives[]` 非空
+- **参数**：无
+- **行为**：点击第一个替代按钮（通常是"跳过"）
+- **超时**：10 秒
 
-- 前提：当前 `screen = "CARD_SELECTION"`
-- 参数：`option_index`
-- 行为：选择指定牌并自动确认
-- 当前目标：优先覆盖删牌场景
+```
+请求: { "action": "skip_reward_cards" }
+```
 
 ### `collect_rewards_and_proceed`
 
-- 前提：当前 `screen = "REWARD"`
-- 参数：无
-- 行为：自动收取奖励，遇到卡牌奖励默认选第一张，并在可继续时点击继续
-- 说明：适合无人值守推进，不适合作为构筑决策接口
+自动收取全部奖励并点击继续。
+
+- **前提**：`screen = "REWARD"`
+- **参数**：无
+- **行为**：
+  1. 逐个领取可领取的奖励（跳过无空位的药水）
+  2. 遇到卡牌选择时**自动选择第一张**
+  3. 点击继续按钮
+- **超时**：20 秒
+- **注意**：适合无人值守推进。如需精确控制构筑决策，请用 `claim_reward` + `choose_reward_card` / `skip_reward_cards` 组合
+
+```
+请求: { "action": "collect_rewards_and_proceed" }
+```
+
+### `select_deck_card`
+
+在牌库选牌界面选择一张牌。
+
+- **前提**：`screen = "CARD_SELECTION"`，`selection.cards[]` 非空
+- **参数**：`option_index`（必填）：`selection.cards[]` 的索引
+- **行为**：选择牌并自动确认。当前主要覆盖**删牌**场景
+- **稳定条件**：离开选牌界面
+- **超时**：10 秒
+
+```json
+{
+  "action": "select_deck_card",
+  "option_index": 0
+}
+```
 
 ### `proceed`
 
-- 前提：当前界面存在可用 `ProceedButton`
-- 参数：无
-- 行为：点击继续按钮
+点击当前界面的"继续"按钮。
+
+- **前提**：界面存在可用的 `ProceedButton`（宝箱房、休息点结束后等）
+- **参数**：无
+- **不适用于**：奖励界面（应使用 `collect_rewards_and_proceed` 或手动流程）
+- **稳定条件**：界面切换 或 按钮消失/禁用
+- **超时**：10 秒
+
+```
+请求: { "action": "proceed" }
+```
+
+---
+
+## 典型调用流程
+
+### 战斗回合
+
+```
+1. GET /state                          → 获取手牌、敌人、能量
+2. 选择可打出的卡牌（playable=true）
+3. POST /action { play_card, card_index, target_index? }  → 出牌
+4. 重复 1-3 直到没有可打出的卡或决定结束
+5. POST /action { end_turn }           → 结束回合
+6. 重复 1-5 直到战斗结束
+```
+
+### 战斗结算 → 地图推进
+
+```
+1. GET /state                          → screen=REWARD
+2a. POST /action { collect_rewards_and_proceed }  → 自动收取（简单模式）
+--- 或 ---
+2b. POST /action { claim_reward, option_index=0 }  → 手动领取金币
+    POST /action { claim_reward, option_index=1 }  → 点击卡牌奖励
+    GET /state                                     → 确认 pending_card_choice=true
+    POST /action { choose_reward_card, option_index=2 }  → 选卡
+    POST /action { proceed }                       → 继续（如果有按钮）
+3. GET /state                          → screen=MAP
+4. POST /action { choose_map_node, option_index=0 }  → 选路
+```
+
+---
+
+## 后续计划
+
+以下状态和动作尚未实现，将在后续 Phase 中补充：
+
+| 功能 | 对应字段 / 动作 | 计划阶段 |
+| --- | --- | --- |
+| 事件系统 | `event` payload + `choose_event_option` | Phase 4B |
+| 休息点 | `rest` payload + `rest_site_action` | Phase 4B |
+| 商店 | `shop` payload + `buy_card` / `buy_relic` / `buy_potion` / `remove_card_at_shop` | Phase 4C |
+| 游戏结束 | `game_over` payload | Phase 4C+ |
+| 药水使用 | `use_potion` | Phase 3+ |
