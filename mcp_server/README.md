@@ -56,6 +56,7 @@
 - `confirm_modal`
 - `dismiss_modal`
 - `return_to_main_menu`
+- `run_console_command`（调试 / 验证）
 
 ---
 

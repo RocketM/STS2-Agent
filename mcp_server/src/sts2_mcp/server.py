@@ -594,6 +594,18 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
         return sts2.discard_potion(option_index=option_index)
 
     @mcp.tool
+    def run_console_command(command: str) -> dict[str, Any]:
+        """Run a game dev-console command for validation or debugging.
+
+        Args:
+            command: raw dev-console command, for example "win".
+
+        This is primarily intended for local testing workflows where the
+        game's built-in dev console is available.
+        """
+        return sts2.run_console_command(command=command)
+
+    @mcp.tool
     def confirm_modal() -> dict[str, Any]:
         """Confirm the currently open modal / FTUE prompt.
 

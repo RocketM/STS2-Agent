@@ -1,4 +1,5 @@
 using Godot;
+using System.Reflection;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -6,10 +7,12 @@ using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.Potions;
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.DevConsole;
 using MegaCrit.Sts2.Core.GameActions;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
+using MegaCrit.Sts2.Core.Nodes.Debug;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Rewards;
 using MegaCrit.Sts2.Core.Nodes.Screens;
@@ -75,6 +78,7 @@ internal static class GameActionService
             "embark" => ExecuteEmbarkAsync(),
             "use_potion" => ExecuteUsePotionAsync(request),
             "discard_potion" => ExecuteDiscardPotionAsync(request),
+            "run_console_command" => ExecuteRunConsoleCommandAsync(request),
             "confirm_modal" => ExecuteConfirmModalAsync(),
             "dismiss_modal" => ExecuteDismissModalAsync(),
             "return_to_main_menu" => ExecuteReturnToMainMenuAsync(),
@@ -1213,6 +1217,13 @@ internal static class GameActionService
                 return await WaitForDeckSelectionResolutionAsync(screen, deadline);
             }
 
+            if (screen is NDeckUpgradeSelectScreen upgradeScreen &&
+                TryGetDeckUpgradeConfirmButton(upgradeScreen, out var upgradeConfirm))
+            {
+                upgradeConfirm!.ForceClick();
+                return await WaitForDeckSelectionResolutionAsync(screen, deadline);
+            }
+
             var confirmButton = screen.GetNodeOrNull<NConfirmButton>("%Confirm");
             if (confirmButton?.IsEnabled == true)
             {
@@ -1220,6 +1231,28 @@ internal static class GameActionService
             }
         }
 
+        return false;
+    }
+
+    private static bool TryGetDeckUpgradeConfirmButton(
+        NDeckUpgradeSelectScreen screen,
+        out NConfirmButton? confirmButton)
+    {
+        var singlePreview = screen.GetNodeOrNull<Control>("%UpgradeSinglePreviewContainer");
+        if (singlePreview?.Visible == true)
+        {
+            confirmButton = singlePreview.GetNodeOrNull<NConfirmButton>("Confirm");
+            return confirmButton?.IsEnabled == true;
+        }
+
+        var multiPreview = screen.GetNodeOrNull<Control>("%UpgradeMultiPreviewContainer");
+        if (multiPreview?.Visible == true)
+        {
+            confirmButton = multiPreview.GetNodeOrNull<NConfirmButton>("Confirm");
+            return confirmButton?.IsEnabled == true;
+        }
+
+        confirmButton = null;
         return false;
     }
 
@@ -1281,7 +1314,7 @@ internal static class GameActionService
             await WaitForNextFrameAsync();
 
             var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
-            if (currentScreen is NTreasureRoomRelicCollection)
+            if (GameStateService.GetTreasureRelicCollection(currentScreen) != null)
             {
                 return true;
             }
@@ -1587,6 +1620,13 @@ internal static class GameActionService
             var proceedButton = restSiteRoom.ProceedButton;
             if (proceedButton != null && GodotObject.IsInstanceValid(proceedButton) && proceedButton.IsEnabled)
             {
+                return true;
+            }
+
+            if (RunManager.Instance.RestSiteSynchronizer.GetLocalOptions().Count == 0)
+            {
+                restSiteRoom.Call(NRestSiteRoom.MethodName.ShowProceedButton);
+                ActiveScreenContext.Instance.Update();
                 return true;
             }
         }
@@ -2141,6 +2181,74 @@ internal static class GameActionService
             message = stable ? "Action completed." : "Action queued but state is still transitioning.",
             state = GameStateService.BuildStatePayload()
         };
+    }
+
+    private static async Task<ActionResponsePayload> ExecuteRunConsoleCommandAsync(ActionRequest request)
+    {
+        var command = request.command?.Trim();
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            throw new ApiException(400, "invalid_request", "command is required.", new
+            {
+                action = "run_console_command"
+            });
+        }
+
+        NDevConsole console;
+        try
+        {
+            console = NDevConsole.Instance;
+        }
+        catch (Exception ex)
+        {
+            throw new ApiException(503, "state_unavailable", $"Dev console is unavailable: {ex.Message}", new
+            {
+                action = "run_console_command",
+                command
+            }, retryable: true);
+        }
+
+        var devConsole = GetDevConsoleCore(console)
+            ?? throw new ApiException(503, "state_unavailable", "Dev console backend is unavailable.", new
+            {
+                action = "run_console_command",
+                command
+            }, retryable: true);
+
+        var runState = RunManager.Instance.DebugOnlyGetState();
+        var player = LocalContext.GetMe(runState);
+        var result = devConsole.ProcessNetCommand(player, command);
+        if (!result.success)
+        {
+            throw new ApiException(409, "invalid_action", string.IsNullOrWhiteSpace(result.msg) ? "Console command failed." : result.msg, new
+            {
+                action = "run_console_command",
+                command
+            });
+        }
+
+        if (result.task != null)
+        {
+            await result.task;
+        }
+
+        await WaitForNextFrameAsync();
+
+        return new ActionResponsePayload
+        {
+            action = "run_console_command",
+            status = "completed",
+            stable = true,
+            message = string.IsNullOrWhiteSpace(result.msg) ? "Console command executed." : result.msg,
+            state = GameStateService.BuildStatePayload()
+        };
+    }
+
+    private static DevConsole? GetDevConsoleCore(NDevConsole console)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var field = typeof(NDevConsole).GetField("_devConsole", flags);
+        return field?.GetValue(console) as DevConsole;
     }
 
     private static async Task<ActionResponsePayload> ExecuteConfirmModalAsync()
@@ -2815,6 +2923,8 @@ internal sealed class ActionRequest
     public int? target_index { get; init; }
 
     public int? option_index { get; init; }
+
+    public string? command { get; init; }
 
     public object? client_context { get; init; }
 }

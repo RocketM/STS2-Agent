@@ -309,7 +309,7 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `kind` | string | 选牌类型（`"deck_card_select"` 或 `"deck_upgrade_select"`） |
+| `kind` | string | 选牌类型（`"deck_card_select"`、`"deck_upgrade_select"`、`"deck_transform_select"`、`"deck_enchant_select"`） |
 | `prompt` | string | 提示文字（如"选择一张牌移除"） |
 | `cards[]` | object[] | 可选卡牌列表 |
 
@@ -924,7 +924,7 @@
 
 - **前提**：`screen = "CARD_SELECTION"`，`selection.cards[]` 非空
 - **参数**：`option_index`（必填）：`selection.cards[]` 的索引
-- **行为**：选择牌并自动确认。当前覆盖**删牌**和**升级牌**场景
+- **行为**：选择牌并自动确认。当前已验证**删牌**、**升级牌**场景；变化牌、附魔牌等单选牌库选择也复用此接口
 - **稳定条件**：离开选牌界面
 - **超时**：10 秒
 
@@ -941,7 +941,7 @@
 
 - **前提**：`screen` = `CHEST`，宝箱尚未打开（`chest.is_opened` = false）
 - **参数**：无
-- **稳定条件**：界面切换至遗物选择子界面（`NTreasureRoomRelicCollection`）
+- **稳定条件**：宝箱房内的遗物选择界面已展开，`chest.relic_options[]` 可读
 - **超时**：10 秒
 
 ```

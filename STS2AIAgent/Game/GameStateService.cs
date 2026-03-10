@@ -519,13 +519,34 @@ internal static class GameStateService
 
     public static bool CanChooseTreasureRelic(IScreenContext? currentScreen)
     {
-        if (currentScreen is not NTreasureRoomRelicCollection)
+        if (GetTreasureRelicCollection(currentScreen) == null)
         {
             return false;
         }
 
         var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
         return relics != null && relics.Count > 0;
+    }
+
+    public static NTreasureRoomRelicCollection? GetTreasureRelicCollection(IScreenContext? currentScreen)
+    {
+        if (currentScreen is NTreasureRoomRelicCollection relicCollection)
+        {
+            return relicCollection;
+        }
+
+        if (currentScreen is NTreasureRoom treasureRoom)
+        {
+            var nestedCollection = treasureRoom.GetNodeOrNull<NTreasureRoomRelicCollection>("%RelicCollection");
+            if (nestedCollection != null &&
+                GodotObject.IsInstanceValid(nestedCollection) &&
+                nestedCollection.Visible)
+            {
+                return nestedCollection;
+            }
+        }
+
+        return null;
     }
 
     public static bool CanChooseEventOption(IScreenContext? currentScreen)
@@ -1313,7 +1334,13 @@ internal static class GameStateService
 
         return new SelectionPayload
         {
-            kind = currentScreen is NDeckUpgradeSelectScreen ? "deck_upgrade_select" : "deck_card_select",
+            kind = currentScreen switch
+            {
+                NDeckUpgradeSelectScreen => "deck_upgrade_select",
+                NDeckTransformSelectScreen => "deck_transform_select",
+                NDeckEnchantSelectScreen => "deck_enchant_select",
+                _ => "deck_card_select"
+            },
             prompt = GetDeckSelectionPrompt(currentScreen) ?? string.Empty,
             cards = cards.Select((holder, index) => BuildSelectionCardPayload(holder.CardModel!, index)).ToArray()
         };
@@ -1548,7 +1575,8 @@ internal static class GameStateService
 
     private static ChestPayload? BuildChestPayload(IScreenContext? currentScreen)
     {
-        if (currentScreen is NTreasureRoomRelicCollection)
+        var relicCollection = GetTreasureRelicCollection(currentScreen);
+        if (relicCollection != null)
         {
             var relics = RunManager.Instance.TreasureRoomRelicSynchronizer.CurrentRelics;
             return new ChestPayload
@@ -2278,7 +2306,7 @@ internal static class GameStateService
         {
             NGameOverScreen => "GAME_OVER",
             NCardRewardSelectionScreen => "REWARD",
-            NDeckCardSelectScreen or NDeckUpgradeSelectScreen => "CARD_SELECTION",
+            NDeckCardSelectScreen or NDeckUpgradeSelectScreen or NDeckTransformSelectScreen or NDeckEnchantSelectScreen => "CARD_SELECTION",
             NRewardsScreen => "REWARD",
             NTreasureRoom or NTreasureRoomRelicCollection => "CHEST",
             NRestSiteRoom => "REST",

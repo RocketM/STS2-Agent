@@ -347,6 +347,16 @@ class Sts2Client:
             },
         )
 
+    def run_console_command(self, command: str) -> dict[str, Any]:
+        return self.execute_action(
+            "run_console_command",
+            command=command,
+            client_context={
+                "source": "mcp",
+                "tool_name": "run_console_command",
+            },
+        )
+
     def confirm_modal(self) -> dict[str, Any]:
         return self.execute_action(
             "confirm_modal",
