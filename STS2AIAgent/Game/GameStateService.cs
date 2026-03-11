@@ -1028,12 +1028,17 @@ internal static class GameStateService
 
     public static bool CardRequiresTarget(CardModel card)
     {
-        return card.TargetType == TargetType.AnyEnemy || card.TargetType == TargetType.AnyAlly;
+        return RequiresIndexedEnemyTarget(card.TargetType);
     }
 
     public static bool IsCardPlayable(CardModel card)
     {
-        return card.CanPlay(out _, out _);
+        return card.CanPlay(out _, out _) && IsCardTargetSupported(card);
+    }
+
+    public static bool IsCardTargetSupported(CardModel card)
+    {
+        return card.TargetType != TargetType.AnyAlly;
     }
 
     public static string? GetUnplayableReasonCode(CardModel card)
@@ -1786,6 +1791,7 @@ internal static class GameStateService
     private static CombatHandCardPayload BuildHandCardPayload(CardModel card, int index)
     {
         card.CanPlay(out var reason, out _);
+        var targetSupported = IsCardTargetSupported(card);
 
         return new CombatHandCardPayload
         {
@@ -1799,8 +1805,10 @@ internal static class GameStateService
             star_costs_x = card.HasStarCostX,
             energy_cost = card.EnergyCost.GetWithModifiers(CostModifiers.All),
             star_cost = Math.Max(0, card.GetStarCostWithModifiers()),
-            playable = reason == UnplayableReason.None,
-            unplayable_reason = GetUnplayableReasonCode(reason)
+            playable = targetSupported && reason == UnplayableReason.None,
+            unplayable_reason = targetSupported
+                ? GetUnplayableReasonCode(reason)
+                : "unsupported_target_type"
         };
     }
 
@@ -2134,7 +2142,7 @@ internal static class GameStateService
             return false;
         }
 
-        if (!potion.PassesCustomUsabilityCheck || !IsPotionTargetSupported(combatState, player, potion))
+        if (!potion.PassesCustomUsabilityCheck || !IsPotionTargetSupported(combatState, potion))
         {
             return false;
         }
@@ -2157,19 +2165,30 @@ internal static class GameStateService
 
     public static bool PotionRequiresTarget(PotionModel potion)
     {
-        return potion.TargetType == TargetType.AnyEnemy ||
-            potion.TargetType == TargetType.AnyPlayer ||
-            potion.TargetType == TargetType.AnyAlly;
+        return RequiresIndexedEnemyTarget(potion.TargetType);
     }
 
-    private static bool IsPotionTargetSupported(CombatState? combatState, Player player, PotionModel potion)
+    private static bool IsPotionTargetSupported(CombatState? combatState, PotionModel potion)
     {
         return potion.TargetType switch
         {
             TargetType.AnyEnemy => combatState != null && combatState.Enemies.Any(enemy => enemy.IsAlive),
+            TargetType.AnyPlayer => !PotionRequiresExplicitPlayerSelection(combatState, potion),
             TargetType.TargetedNoCreature => true,
             _ => true
         };
+    }
+
+    private static bool PotionRequiresExplicitPlayerSelection(CombatState? combatState, PotionModel potion)
+    {
+        return combatState != null &&
+            potion.Owner.RunState.Players.Count > 1 &&
+            combatState.PlayerCreatures.Count(creature => creature.IsAlive) > 1;
+    }
+
+    private static bool RequiresIndexedEnemyTarget(TargetType targetType)
+    {
+        return targetType == TargetType.AnyEnemy;
     }
 
     private static NMerchantRoom? GetMerchantRoom(IScreenContext? currentScreen)

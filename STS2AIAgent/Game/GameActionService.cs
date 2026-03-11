@@ -229,6 +229,18 @@ internal static class GameActionService
         }
 
         var card = hand[request.card_index.Value];
+        if (!GameStateService.IsCardTargetSupported(card))
+        {
+            throw new ApiException(409, "invalid_action", "This target type is not supported by the API.", new
+            {
+                action = "play_card",
+                card_index = request.card_index,
+                card_id = card.Id.Entry,
+                target_type = card.TargetType.ToString(),
+                screen
+            });
+        }
+
         var target = ResolveCardTarget(request, combatState, card);
 
         if (!card.TryManualPlay(target))
@@ -649,7 +661,6 @@ internal static class GameActionService
         }
 
         var selectedNode = availableNodes[request.option_index.Value];
-        var previousCoord = runState?.CurrentMapCoord;
         var roomEntered = false;
 
         void OnRoomEntered()
@@ -661,7 +672,7 @@ internal static class GameActionService
         try
         {
             selectedNode.ForceClick();
-            var stable = await WaitForMapTransitionAsync(previousCoord, TimeSpan.FromSeconds(10), () => roomEntered);
+            var stable = await WaitForMapTransitionAsync(TimeSpan.FromSeconds(10), () => roomEntered);
 
             return new ActionResponsePayload
             {
@@ -678,7 +689,7 @@ internal static class GameActionService
         }
     }
 
-    private static async Task<bool> WaitForMapTransitionAsync(MapCoord? previousCoord, TimeSpan timeout, Func<bool> roomEntered)
+    private static async Task<bool> WaitForMapTransitionAsync(TimeSpan timeout, Func<bool> roomEntered)
     {
         if (NGame.Instance == null)
         {
@@ -690,41 +701,66 @@ internal static class GameActionService
         {
             await NGame.Instance.ToSignal(NGame.Instance.GetTree(), SceneTree.SignalName.ProcessFrame);
 
-            if (roomEntered() || IsMapTransitionStable(previousCoord))
+            if (IsMapTransitionStable(roomEntered))
             {
                 return true;
             }
         }
 
-        return roomEntered() || IsMapTransitionStable(previousCoord);
+        return IsMapTransitionStable(roomEntered);
     }
 
-    private static bool IsMapTransitionStable(MapCoord? previousCoord)
+    private static bool IsMapTransitionStable(Func<bool> roomEntered)
     {
-        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
-        if (GameStateService.ResolveScreen(currentScreen) != "MAP")
+        if (!HasEnteredMapDestination(roomEntered))
+        {
+            return false;
+        }
+
+        return IsStableScreenState(ActiveScreenContext.Instance.GetCurrentScreen(), allowMapScreen: false);
+    }
+
+    private static bool HasEnteredMapDestination(Func<bool> roomEntered)
+    {
+        if (roomEntered())
         {
             return true;
         }
 
         var runState = RunManager.Instance.DebugOnlyGetState();
-        if (runState == null)
+        return runState?.CurrentRoom is not null && runState.CurrentRoom is not MapRoom;
+    }
+
+    private static bool IsStableScreenState(IScreenContext? currentScreen, bool allowMapScreen)
+    {
+        var screen = GameStateService.ResolveScreen(currentScreen);
+        if (screen == "UNKNOWN")
         {
             return false;
         }
 
-        if (runState.CurrentRoom is not MapRoom)
+        if (screen == "COMBAT")
+        {
+            return currentScreen is NCombatRoom combatRoom &&
+                combatRoom.Mode == CombatRoomMode.ActiveCombat &&
+                CombatManager.Instance.IsInProgress &&
+                !CombatManager.Instance.IsOverOrEnding &&
+                CombatManager.Instance.IsPlayPhase &&
+                !CombatManager.Instance.PlayerActionsDisabled &&
+                CombatManager.Instance.DebugOnlyGetState() != null;
+        }
+
+        if (screen != "MAP")
         {
             return true;
         }
 
-        var currentCoord = runState.CurrentMapCoord;
-        if (!previousCoord.HasValue)
+        if (!allowMapScreen)
         {
-            return currentCoord.HasValue;
+            return false;
         }
 
-        return currentCoord.HasValue && !currentCoord.Value.Equals(previousCoord.Value);
+        return currentScreen is NMapScreen mapScreen && !mapScreen.IsTraveling;
     }
 
     private static async Task<ActionResponsePayload> ExecuteProceedAsync()
@@ -743,7 +779,7 @@ internal static class GameActionService
         }
 
         proceedButton.ForceClick();
-        var stable = await WaitForProceedTransitionAsync(currentScreen, proceedButton, TimeSpan.FromSeconds(10));
+        var stable = await WaitForProceedTransitionAsync(currentScreen, TimeSpan.FromSeconds(10));
 
         return new ActionResponsePayload
         {
@@ -757,7 +793,6 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForProceedTransitionAsync(
         IScreenContext? previousScreen,
-        NProceedButton previousButton,
         TimeSpan timeout)
     {
         if (NGame.Instance == null)
@@ -770,29 +805,24 @@ internal static class GameActionService
         {
             await WaitForNextFrameAsync();
 
-            if (IsProceedStable(previousScreen, previousButton))
+            if (IsProceedStable(previousScreen))
             {
                 return true;
             }
         }
 
-        return IsProceedStable(previousScreen, previousButton);
+        return IsProceedStable(previousScreen);
     }
 
-    private static bool IsProceedStable(IScreenContext? previousScreen, NProceedButton previousButton)
+    private static bool IsProceedStable(IScreenContext? previousScreen)
     {
         var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
-        if (!ReferenceEquals(currentScreen, previousScreen))
+        if (ReferenceEquals(currentScreen, previousScreen))
         {
-            return true;
+            return false;
         }
 
-        if (!GodotObject.IsInstanceValid(previousButton))
-        {
-            return true;
-        }
-
-        return !previousButton.IsVisibleInTree() || !previousButton.IsEnabled;
+        return IsStableScreenState(currentScreen, allowMapScreen: true);
     }
 
     private static async Task<ActionResponsePayload> ExecuteCollectRewardsAndProceedAsync()
