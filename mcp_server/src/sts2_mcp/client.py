@@ -391,6 +391,7 @@ class Sts2Client:
         card_index: int | None = None,
         target_index: int | None = None,
         option_index: int | None = None,
+        command: str | None = None,
         client_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self._request(
@@ -401,6 +402,7 @@ class Sts2Client:
                 "card_index": card_index,
                 "target_index": target_index,
                 "option_index": option_index,
+                "command": command,
                 "client_context": client_context,
             },
             is_action=True,

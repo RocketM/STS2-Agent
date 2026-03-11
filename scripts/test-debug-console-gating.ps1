@@ -3,6 +3,7 @@ param(
     [int]$Attempts = 40,
     [int]$DelaySeconds = 2,
     [string]$Command = "help",
+    [string]$ProjectRoot = "C:/Users/chart/Documents/project/sp",
     [switch]$EnableDebugActions
 )
 
@@ -65,6 +66,84 @@ function Invoke-ActionJson {
     }
 }
 
+function Invoke-McpDebugSmoke {
+    param(
+        [string]$RepoRoot,
+        [string]$ConsoleCommand
+    )
+
+    $mcpRoot = Join-Path $RepoRoot "mcp_server"
+    $previousCommandEnv = $env:STS2_DEBUG_TEST_COMMAND
+    $env:STS2_DEBUG_TEST_COMMAND = $ConsoleCommand
+
+    try {
+        Push-Location $mcpRoot
+
+        try {
+            $pythonScript = @'
+import asyncio
+import json
+import os
+
+from sts2_mcp.client import Sts2Client
+from sts2_mcp.server import create_server
+
+
+class CapturingClient(Sts2Client):
+    def __init__(self) -> None:
+        super().__init__(base_url="http://127.0.0.1:8080")
+        self.last_request = None
+
+    def _request(self, method, path, payload=None, *, is_action=False):
+        self.last_request = {
+            "method": method,
+            "path": path,
+            "payload": payload,
+            "is_action": is_action,
+        }
+        return {"ok": True}
+
+
+async def main() -> None:
+    server = create_server()
+    tools = [tool.name for tool in await server.list_tools()]
+    client = CapturingClient()
+    client_error = None
+
+    try:
+        client.run_console_command(os.environ.get("STS2_DEBUG_TEST_COMMAND", "help"))
+    except Exception as exc:
+        client_error = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+
+    print(json.dumps({
+        "tool_registered": "run_console_command" in tools,
+        "tool_count": len(tools),
+        "client_error": client_error,
+        "client_request": client.last_request,
+    }, ensure_ascii=False))
+
+
+asyncio.run(main())
+'@
+
+            return ($pythonScript | uv run python - | ConvertFrom-Json)
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    finally {
+        if ($null -eq $previousCommandEnv) {
+            Remove-Item Env:STS2_DEBUG_TEST_COMMAND -ErrorAction SilentlyContinue
+        } else {
+            $env:STS2_DEBUG_TEST_COMMAND = $previousCommandEnv
+        }
+    }
+}
+
 $previousEnv = $env:STS2_ENABLE_DEBUG_ACTIONS
 
 if ($EnableDebugActions) {
@@ -94,6 +173,28 @@ if ($EnableDebugActions) {
 $proc = [System.Diagnostics.Process]::Start($startInfo)
 
 try {
+    $mcpResult = Invoke-McpDebugSmoke -RepoRoot $ProjectRoot -ConsoleCommand $Command
+
+    if ($EnableDebugActions) {
+        if (-not $mcpResult.tool_registered) {
+            throw "Expected MCP debug tool to be registered when STS2_ENABLE_DEBUG_ACTIONS=1."
+        }
+    } else {
+        if ($mcpResult.tool_registered) {
+            throw "Expected MCP debug tool to stay hidden while STS2_ENABLE_DEBUG_ACTIONS is disabled."
+        }
+    }
+
+    if ($null -ne $mcpResult.client_error) {
+        throw "Expected MCP client run_console_command wiring to succeed, but received: $($mcpResult.client_error | ConvertTo-Json -Depth 5 -Compress)"
+    }
+
+    if ($null -eq $mcpResult.client_request -or
+        $mcpResult.client_request.payload.action -ne "run_console_command" -or
+        $mcpResult.client_request.payload.command -ne $Command) {
+        throw "Expected MCP client payload to contain action=run_console_command and the requested command, but received: $($mcpResult | ConvertTo-Json -Depth 6 -Compress)"
+    }
+
     Wait-ForHealth -MaxAttempts $Attempts -SleepSeconds $DelaySeconds -Process $proc
     $result = Invoke-ActionJson -ActionName "run_console_command" -ConsoleCommand $Command
 
@@ -113,6 +214,8 @@ try {
         status = $result.data.status
         error_code = $result.error.code
         message = if ($result.ok) { $result.data.message } else { $result.error.message }
+        mcp_tool_registered = [bool]$mcpResult.tool_registered
+        mcp_client_payload_ok = $null -eq $mcpResult.client_error
     } | ConvertTo-Json -Compress
 }
 finally {

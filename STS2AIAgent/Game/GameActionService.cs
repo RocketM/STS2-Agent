@@ -42,8 +42,6 @@ namespace STS2AIAgent.Game;
 
 internal static class GameActionService
 {
-    private static readonly bool DebugActionsEnabled = IsDebugActionsEnabled();
-
     public static Task<ActionResponsePayload> ExecuteAsync(ActionRequest request)
     {
         var actionName = request.action?.Trim().ToLowerInvariant();
@@ -2284,7 +2282,7 @@ internal static class GameActionService
 
     private static async Task<ActionResponsePayload> ExecuteRunConsoleCommandAsync(ActionRequest request)
     {
-        if (!DebugActionsEnabled)
+        if (!AreDebugActionsEnabled())
         {
             throw new ApiException(409, "invalid_action", "run_console_command is disabled. Set STS2_ENABLE_DEBUG_ACTIONS=1 for development use.", new
             {
@@ -2358,18 +2356,49 @@ internal static class GameActionService
         return field?.GetValue(console) as DevConsole;
     }
 
-    private static bool IsDebugActionsEnabled()
+    private static bool AreDebugActionsEnabled()
     {
-        var raw = System.Environment.GetEnvironmentVariable("STS2_ENABLE_DEBUG_ACTIONS");
+        var raw = ReadEnvironmentVariable("STS2_ENABLE_DEBUG_ACTIONS");
         if (string.IsNullOrWhiteSpace(raw))
         {
             return false;
         }
 
+        raw = raw.Trim();
+
         return raw.Equals("1", StringComparison.OrdinalIgnoreCase) ||
                raw.Equals("true", StringComparison.OrdinalIgnoreCase) ||
                raw.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
                raw.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ReadEnvironmentVariable(string name)
+    {
+        var processValue = System.Environment.GetEnvironmentVariable(name);
+        if (!string.IsNullOrWhiteSpace(processValue))
+        {
+            return processValue;
+        }
+
+        try
+        {
+            var godotValue = OS.GetEnvironment(name);
+            if (!string.IsNullOrWhiteSpace(godotValue))
+            {
+                return godotValue;
+            }
+        }
+        catch
+        {
+        }
+
+        var userValue = System.Environment.GetEnvironmentVariable(name, System.EnvironmentVariableTarget.User);
+        if (!string.IsNullOrWhiteSpace(userValue))
+        {
+            return userValue;
+        }
+
+        return System.Environment.GetEnvironmentVariable(name, System.EnvironmentVariableTarget.Machine);
     }
 
     private static async Task<ActionResponsePayload> ExecuteConfirmModalAsync()
