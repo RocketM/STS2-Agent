@@ -25,6 +25,10 @@ test-mod-load.ps1 -DeepCheck: {"health_ok":true,"state_ok":true,"actions_ok":tru
 test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 ```
 
+Additional tooling note:
+
+- `scripts/build-mod.ps1` now fails fast if `dotnet build` or the Godot PCK step returns a non-zero exit code; it no longer silently installs a stale DLL after a failed build
+
 ## Real-Game Validation
 
 ### Main menu and start flow
@@ -39,6 +43,10 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 - `continue_run` successfully restored an in-progress run multiple times
 - Follow-up `GET /state` stabilized to the correct room state (`REWARD`, `MAP`, `SHOP`, etc.)
 - After commit `26cd9b0`, `continue_run` action payload itself was revalidated and returned a stable non-`UNKNOWN` screen
+- Startup stability was revalidated after the listener retry patch:
+  - two back-to-back `start-game-session.ps1 -EnableDebugActions` runs both reached healthy `/health`
+  - `test-mod-load.ps1 -DeepCheck` passed after each restart
+  - the latest game log showed only `Listening on http://127.0.0.1:8080/` and no prefix-conflict error
 
 ### Combat and consumables
 
@@ -80,9 +88,9 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 - The script now also guards potion semantics:
   - any usable potion, including non-combat potions, must expose `use_potion`
   - `TargetedNoCreature` potions must not report `requires_target = true`
- - The script also now respects the shop's two-layer model:
-   - closed shop room: `open_shop_inventory` is expected, but `buy_*` actions are not
-   - open merchant inventory: `buy_*` / `remove_card_at_shop` are expected when the payload is affordable
+- The script also now respects the shop's two-layer model:
+  - closed shop room: `open_shop_inventory` is expected, but `buy_*` actions are not
+  - open merchant inventory: `buy_*` / `remove_card_at_shop` are expected when the payload is affordable
 
 ### Reward flow
 

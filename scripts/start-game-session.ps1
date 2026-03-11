@@ -33,10 +33,32 @@ function Wait-ForHealth {
     throw "Timed out waiting for /health."
 }
 
+function Wait-ForPortRelease {
+    param(
+        [int]$MaxAttempts,
+        [int]$SleepSeconds
+    )
+
+    for ($i = 0; $i -lt $MaxAttempts; $i++) {
+        try {
+            $listenerActive = @(Get-NetTCPConnection -LocalPort 8080 -State Listen -ErrorAction Stop).Count -gt 0
+        } catch {
+            $listenerActive = $false
+        }
+
+        if (-not $listenerActive) {
+            return
+        }
+
+        Start-Sleep -Seconds $SleepSeconds
+    }
+}
+
 $existing = Get-Process -Name "SlayTheSpire2" -ErrorAction SilentlyContinue
 if ($existing) {
     Stop-Process -Id $existing.Id -Force
     Start-Sleep -Seconds 2
+    Wait-ForPortRelease -MaxAttempts 10 -SleepSeconds 1
 }
 
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo

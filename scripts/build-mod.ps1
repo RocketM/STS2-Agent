@@ -21,6 +21,9 @@ $builderScript = Join-Path $builderProjectDir "build_pck.gd"
 
 Write-Host "[build-mod] Building C# mod project..."
 dotnet build $modProject -c $Configuration | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet build failed with exit code $LASTEXITCODE"
+}
 
 if (-not (Test-Path $dllSource)) {
     throw "Built DLL not found: $dllSource"
@@ -35,6 +38,9 @@ if (-not (Test-Path $manifestSource)) {
 
 Write-Host "[build-mod] Packing mod_manifest.json into PCK..."
 & $GodotExe --headless --path $builderProjectDir --script $builderScript -- $manifestSource $pckOutput | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "Godot PCK build failed with exit code $LASTEXITCODE"
+}
 
 if (-not (Test-Path $pckOutput)) {
     throw "PCK output not found: $pckOutput"

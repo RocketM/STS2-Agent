@@ -1,4 +1,5 @@
 using System.Net;
+using System.Threading;
 using MegaCrit.Sts2.Core.Logging;
 
 namespace STS2AIAgent.Server;
@@ -7,6 +8,8 @@ public sealed class HttpServer
 {
     private const string Prefix = "http://127.0.0.1:8080/";
     private const string LogPrefix = "[STS2AIAgent.HttpServer]";
+    private const int StartRetryCount = 20;
+    private static readonly TimeSpan StartRetryDelay = TimeSpan.FromMilliseconds(250);
 
     private static readonly Lazy<HttpServer> LazyInstance = new(() => new HttpServer());
 
@@ -31,9 +34,7 @@ public sealed class HttpServer
                 return;
             }
 
-            _listener = new HttpListener();
-            _listener.Prefixes.Add(Prefix);
-            _listener.Start();
+            _listener = StartListenerWithRetry();
 
             _cts = new CancellationTokenSource();
             _listenLoopTask = Task.Run(() => ListenLoopAsync(_listener, _cts.Token));
@@ -137,5 +138,33 @@ public sealed class HttpServer
                 }
             }
         }
+    }
+
+    private static HttpListener StartListenerWithRetry()
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            var listener = new HttpListener();
+            listener.Prefixes.Add(Prefix);
+
+            try
+            {
+                listener.Start();
+                return listener;
+            }
+            catch (HttpListenerException ex) when (IsPrefixConflict(ex) && attempt < StartRetryCount)
+            {
+                listener.Close();
+                Log.Warn($"{LogPrefix} Prefix still busy, retrying start ({attempt}/{StartRetryCount - 1})...");
+                Thread.Sleep(StartRetryDelay);
+            }
+        }
+    }
+
+    private static bool IsPrefixConflict(HttpListenerException ex)
+    {
+        return ex.ErrorCode == 183 ||
+            ex.NativeErrorCode == 183 ||
+            ex.Message.Contains("conflicts with an existing registration", StringComparison.OrdinalIgnoreCase);
     }
 }
