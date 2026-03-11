@@ -65,6 +65,12 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
   - without the env var, `run_console_command` is not registered
   - with the env var, `run_console_command` is registered
 
+### State invariant smoke check
+
+- `scripts/test-state-invariants.ps1` was added as a lightweight payload/action drift check
+- It passed on both `MAIN_MENU` and `REWARD` during the latest follow-up validation
+- The reward-screen run also confirmed that `reward.can_proceed = true` now implies MCP-side `proceed`
+
 ### Reward flow
 
 - `collect_rewards_and_proceed` passed
@@ -147,4 +153,6 @@ Reason:
 Recommended next step:
 
 1. Keep the current validation record as the release baseline
-2. When STS2 receives a content patch, re-run the same Phase 6 checklist and spot-check reward, event, and card-selection branches first
+2. Use `docs/mechanic-coverage-matrix.md` to drive future breadth-oriented mechanic probes
+3. Run `scripts/test-state-invariants.ps1` before broad manual playtesting to catch payload/action drift early
+4. When STS2 receives a content patch, re-run the same Phase 6 checklist and spot-check reward, event, and card-selection branches first
