@@ -71,6 +71,66 @@ function Test-PlayerSummaries {
     }
 }
 
+function Test-IndexedTargetContract {
+    param(
+        [System.Collections.Generic.List[string]]$Failures,
+        [object]$Payload,
+        [string]$Label,
+        [int]$EnemyCount,
+        [int]$PlayerCount,
+        [bool]$ShouldHaveTargetsWhenUsable
+    )
+
+    $scope = [string]$Payload.target_index_space
+    $indices = @($Payload.valid_target_indices | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ })
+
+    if ($Payload.requires_target) {
+        if ([string]::IsNullOrWhiteSpace($scope)) {
+            $Failures.Add("$Label requires_target=true but target_index_space is missing")
+            return
+        }
+
+        if (($indices | Select-Object -Unique).Count -ne $indices.Count) {
+            $Failures.Add("$Label valid_target_indices must not contain duplicates")
+        }
+
+        switch ($scope) {
+            "enemies" {
+                foreach ($idx in $indices) {
+                    if ([int]$idx -lt 0 -or [int]$idx -ge $EnemyCount) {
+                        $Failures.Add("$Label valid_target_indices contains an out-of-range combat.enemies[] index")
+                        break
+                    }
+                }
+            }
+            "players" {
+                foreach ($idx in $indices) {
+                    if ([int]$idx -lt 0 -or [int]$idx -ge $PlayerCount) {
+                        $Failures.Add("$Label valid_target_indices contains an out-of-range combat.players[] index")
+                        break
+                    }
+                }
+            }
+            default {
+                $Failures.Add("$Label target_index_space should be 'enemies' or 'players'")
+            }
+        }
+
+        if ($ShouldHaveTargetsWhenUsable -and $indices.Count -eq 0) {
+            $Failures.Add("$Label requires_target=true but valid_target_indices is empty")
+        }
+    }
+    else {
+        if (-not [string]::IsNullOrWhiteSpace($scope)) {
+            $Failures.Add("$Label requires_target=false but target_index_space is populated")
+        }
+
+        if ($indices.Count -gt 0) {
+            $Failures.Add("$Label requires_target=false but valid_target_indices is populated")
+        }
+    }
+}
+
 $stateResponse = Invoke-JsonEndpoint -Path "/state"
 $actionsResponse = Invoke-JsonEndpoint -Path "/actions/available"
 
@@ -353,6 +413,8 @@ if ($null -ne $state.game_over -and $state.game_over.can_return_to_main_menu) {
 
 if ($state.in_combat -and $null -ne $state.combat) {
     $combatSelectionActive = ($state.screen -eq "CARD_SELECTION") -and ($null -ne $state.selection)
+    $combatEnemyCount = @($state.combat.enemies).Count
+    $combatPlayerCount = @($state.combat.players).Count
 
     if (@($state.combat.players).Count -gt 0) {
         Test-PlayerSummaries -Failures $failures -Players @($state.combat.players) -Label "combat.players"
@@ -406,6 +468,44 @@ if ($state.in_combat -and $null -ne $state.combat) {
             $expectedSlotIndex++
         }
     }
+
+    $localCombatPlayer = @($state.combat.players | Where-Object { $_.is_local } | Select-Object -First 1)
+    $localCombatPlayerIndex = if ($localCombatPlayer.Count -eq 1) { [int]$localCombatPlayer[0].slot_index } else { -1 }
+
+    foreach ($card in @($state.combat.hand)) {
+        if ($null -eq $card) {
+            continue
+        }
+
+        Test-IndexedTargetContract `
+            -Failures $failures `
+            -Payload $card `
+            -Label "combat.hand[$($card.index)]" `
+            -EnemyCount $combatEnemyCount `
+            -PlayerCount $combatPlayerCount `
+            -ShouldHaveTargetsWhenUsable ([bool]$card.playable)
+
+        if ($card.target_type -eq "AnyEnemy") {
+            if (-not $card.requires_target) {
+                $failures.Add("combat.hand[$($card.index)] should require target_index when target_type=AnyEnemy")
+            }
+        }
+
+        if ($card.target_type -eq "AnyAlly") {
+            if (-not $card.requires_target) {
+                $failures.Add("combat.hand[$($card.index)] should require target_index when target_type=AnyAlly")
+            }
+
+            if ($card.target_index_space -ne "players") {
+                $failures.Add("combat.hand[$($card.index)] should target combat.players[] when target_type=AnyAlly")
+            }
+
+            $cardTargetIndices = @($card.valid_target_indices | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ })
+            if ($localCombatPlayerIndex -ge 0 -and @($cardTargetIndices | Where-Object { $_ -eq $localCombatPlayerIndex }).Count -gt 0) {
+                $failures.Add("combat.hand[$($card.index)] AnyAlly targets should not include the local player slot")
+            }
+        }
+    }
 }
 
 if (@($state.run.potions | Where-Object { $_.can_use }).Count -gt 0) {
@@ -427,12 +527,42 @@ foreach ($potion in @($state.run.potions)) {
         continue
     }
 
-    if (($potion.target_type -eq "TargetedNoCreature" -or $potion.target_type -eq "AnyPlayer") -and $potion.requires_target) {
-        $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=$($potion.target_type)")
+    if ($potion.target_type -eq "TargetedNoCreature" -and $potion.requires_target) {
+        $failures.Add("potion '$($potion.potion_id)' should not require target_index when target_type=TargetedNoCreature")
     }
 
     if ($potion.target_type -eq "AnyEnemy" -and (-not $potion.requires_target)) {
         $failures.Add("potion '$($potion.potion_id)' should require target_index when target_type=AnyEnemy")
+    }
+
+    if ($potion.requires_target) {
+        $combatEnemyCount = if ($null -ne $state.combat) { @($state.combat.enemies).Count } else { 0 }
+        $combatPlayerCount = if ($null -ne $state.combat) { @($state.combat.players).Count } else { 0 }
+        Test-IndexedTargetContract `
+            -Failures $failures `
+            -Payload $potion `
+            -Label "run.potions[$($potion.index)]" `
+            -EnemyCount $combatEnemyCount `
+            -PlayerCount $combatPlayerCount `
+            -ShouldHaveTargetsWhenUsable ([bool]$potion.can_use)
+    }
+    else {
+        $potionTargetIndices = @($potion.valid_target_indices | Where-Object { $null -ne $_ } | ForEach-Object { [int]$_ })
+        if (-not [string]::IsNullOrWhiteSpace([string]$potion.target_index_space)) {
+            $failures.Add("potion '$($potion.potion_id)' should leave target_index_space empty when requires_target=false")
+        }
+
+        if ($potionTargetIndices.Count -gt 0) {
+            $failures.Add("potion '$($potion.potion_id)' should leave valid_target_indices empty when requires_target=false")
+        }
+    }
+
+    if ($potion.target_type -eq "AnyEnemy" -and $potion.target_index_space -ne "enemies") {
+        $failures.Add("potion '$($potion.potion_id)' should target combat.enemies[] when target_type=AnyEnemy")
+    }
+
+    if ($potion.target_type -eq "AnyPlayer" -and $potion.requires_target -and $potion.target_index_space -ne "players") {
+        $failures.Add("potion '$($potion.potion_id)' should target combat.players[] when target_type=AnyPlayer and requires_target=true")
     }
 }
 

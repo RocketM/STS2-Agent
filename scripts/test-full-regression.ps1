@@ -258,6 +258,11 @@ try {
     Invoke-RepoScript -Name "deferred potion flow" -FileName "test-deferred-potion-flow.ps1"
     Invoke-RepoScript -Name "state invariants after deferred potion flow" -FileName "test-state-invariants.ps1"
 
+    Start-DebugSession -StepName "start debug session for target index contracts"
+    Ensure-ActiveRunMainMenu
+    Invoke-RepoScript -Name "target index contracts" -FileName "test-target-index-contract.ps1"
+    Invoke-RepoScript -Name "state invariants after target index contracts" -FileName "test-state-invariants.ps1"
+
     Start-DebugSession -StepName "start debug session for new-run lifecycle"
     Ensure-ActiveRunMainMenu
     Invoke-RepoScript -Name "new-run lifecycle" -FileName "test-new-run-lifecycle.ps1"

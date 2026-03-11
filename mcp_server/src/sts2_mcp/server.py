@@ -184,7 +184,9 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         Notes:
             - Use `card_index` for `play_card`.
             - Use `option_index` for map, reward, shop, event, rest, and selection actions.
-            - Use `target_index` only for enemy-targeted cards or potions.
+            - Use `target_index` only when the latest state marks a card or potion as `requires_target=true`.
+            - Read `target_index_space` and `valid_target_indices` from state to know whether `target_index`
+              refers to `combat.enemies[]` or `combat.players[]`.
             - `run_console_command` is intentionally excluded from this compact tool.
         """
         normalized = action.strip().lower()

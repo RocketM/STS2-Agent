@@ -1130,12 +1130,25 @@ internal static class GameStateService
             return null;
         }
 
-        return enemies[targetIndex];
+        var enemy = enemies[targetIndex];
+        return enemy.IsAlive && enemy.IsHittable ? enemy : null;
+    }
+
+    public static Creature? ResolvePlayerTarget(CombatState combatState, int targetIndex)
+    {
+        var players = GetOrderedCombatPlayers(combatState);
+        if (targetIndex < 0 || targetIndex >= players.Count)
+        {
+            return null;
+        }
+
+        var player = players[targetIndex];
+        return player.Creature.IsAlive ? player.Creature : null;
     }
 
     public static bool CardRequiresTarget(CardModel card)
     {
-        return RequiresIndexedEnemyTarget(card.TargetType);
+        return RequiresIndexedCardTarget(card.TargetType);
     }
 
     public static bool IsCardPlayable(CardModel card)
@@ -1145,7 +1158,17 @@ internal static class GameStateService
 
     public static bool IsCardTargetSupported(CardModel card)
     {
-        return card.TargetType != TargetType.AnyAlly;
+        return card.TargetType switch
+        {
+            TargetType.None => true,
+            TargetType.Self => true,
+            TargetType.AnyEnemy => true,
+            TargetType.AllEnemies => true,
+            TargetType.RandomEnemy => true,
+            TargetType.AnyAlly => true,
+            TargetType.AllAllies => true,
+            _ => false
+        };
     }
 
     public static string? GetUnplayableReasonCode(CardModel card)
@@ -1455,11 +1478,10 @@ internal static class GameStateService
                 empty_orb_slots = Math.Max(0, orbQueue.Capacity - orbs.Count),
                 orbs = orbs.Select((orb, index) => BuildCombatOrbPayload(orb, index)).ToArray()
             },
-            players = combatState.Players
-                .OrderBy(player => combatState.RunState is RunState runState ? runState.GetPlayerSlotIndex(player) : 0)
+            players = GetOrderedCombatPlayers(combatState)
                 .Select(player => BuildCombatPlayerSummaryPayload(player, combatState, connectedPlayerIds, me.NetId))
                 .ToArray(),
-            hand = hand.Select((card, index) => BuildHandCardPayload(card, index)).ToArray(),
+            hand = hand.Select((card, index) => BuildHandCardPayload(combatState, card, index)).ToArray(),
             enemies = enemies.Select((enemy, index) => BuildEnemyPayload(enemy, index)).ToArray()
         };
     }
@@ -2000,10 +2022,12 @@ internal static class GameStateService
         };
     }
 
-    private static CombatHandCardPayload BuildHandCardPayload(CardModel card, int index)
+    private static CombatHandCardPayload BuildHandCardPayload(CombatState combatState, CardModel card, int index)
     {
         card.CanPlay(out var reason, out _);
         var targetSupported = IsCardTargetSupported(card);
+        var targetIndexSpace = GetCardTargetIndexSpace(card);
+        var validTargetIndices = GetCardTargetIndices(combatState, card);
 
         return new CombatHandCardPayload
         {
@@ -2013,6 +2037,8 @@ internal static class GameStateService
             upgraded = card.IsUpgraded,
             target_type = card.TargetType.ToString(),
             requires_target = CardRequiresTarget(card),
+            target_index_space = targetIndexSpace,
+            valid_target_indices = validTargetIndices,
             costs_x = card.EnergyCost.CostsX,
             star_costs_x = card.HasStarCostX,
             energy_cost = card.EnergyCost.GetWithModifiers(CostModifiers.All),
@@ -2210,6 +2236,10 @@ internal static class GameStateService
         PotionModel? potion,
         int index)
     {
+        var requiresTarget = potion != null && PotionRequiresTarget(combatState, potion);
+        var targetIndexSpace = potion != null ? GetPotionTargetIndexSpace(combatState, potion) : null;
+        var validTargetIndices = potion != null ? GetPotionTargetIndices(combatState, potion) : Array.Empty<int>();
+
         return new RunPotionPayload
         {
             index = index,
@@ -2219,7 +2249,9 @@ internal static class GameStateService
             usage = potion?.Usage.ToString(),
             target_type = potion?.TargetType.ToString(),
             is_queued = potion?.IsQueued ?? false,
-            requires_target = potion != null && PotionRequiresTarget(potion),
+            requires_target = requiresTarget,
+            target_index_space = targetIndexSpace,
+            valid_target_indices = validTargetIndices,
             can_use = IsPotionUsable(currentScreen, combatState, player, potion),
             can_discard = IsPotionDiscardable(player, potion)
         };
@@ -2281,6 +2313,53 @@ internal static class GameStateService
             stars = player.PlayerCombatState?.Stars ?? 0,
             focus = player.Creature.GetPowerAmount<FocusPower>(),
             is_alive = player.Creature.IsAlive
+        };
+    }
+
+    private static string? GetCardTargetIndexSpace(CardModel card)
+    {
+        return card.TargetType switch
+        {
+            TargetType.AnyEnemy => "enemies",
+            TargetType.AnyAlly => "players",
+            _ => null
+        };
+    }
+
+    private static string? GetPotionTargetIndexSpace(CombatState? combatState, PotionModel potion)
+    {
+        return potion.TargetType switch
+        {
+            TargetType.AnyEnemy => "enemies",
+            TargetType.AnyPlayer when PotionRequiresExplicitPlayerSelection(combatState, potion) => "players",
+            TargetType.AnyAlly => "players",
+            _ => null
+        };
+    }
+
+    private static int[] GetCardTargetIndices(CombatState combatState, CardModel card)
+    {
+        return card.TargetType switch
+        {
+            TargetType.AnyEnemy => GetTargetableEnemyIndices(combatState),
+            TargetType.AnyAlly => GetTargetablePlayerIndices(combatState, card.Owner, allowSelf: false),
+            _ => Array.Empty<int>()
+        };
+    }
+
+    private static int[] GetPotionTargetIndices(CombatState? combatState, PotionModel potion)
+    {
+        if (combatState == null)
+        {
+            return Array.Empty<int>();
+        }
+
+        return potion.TargetType switch
+        {
+            TargetType.AnyEnemy => GetTargetableEnemyIndices(combatState),
+            TargetType.AnyPlayer when PotionRequiresExplicitPlayerSelection(combatState, potion) => GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: true),
+            TargetType.AnyAlly => GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: false),
+            _ => Array.Empty<int>()
         };
     }
 
@@ -2447,17 +2526,26 @@ internal static class GameStateService
             player.CanRemovePotions;
     }
 
-    public static bool PotionRequiresTarget(PotionModel potion)
+    public static bool PotionRequiresTarget(CombatState? combatState, PotionModel potion)
     {
-        return RequiresIndexedEnemyTarget(potion.TargetType);
+        return potion.TargetType switch
+        {
+            TargetType.AnyEnemy => true,
+            TargetType.AnyPlayer => PotionRequiresExplicitPlayerSelection(combatState, potion),
+            TargetType.AnyAlly => combatState != null && GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: false).Length > 0,
+            _ => false
+        };
     }
 
     private static bool IsPotionTargetSupported(CombatState? combatState, PotionModel potion)
     {
         return potion.TargetType switch
         {
-            TargetType.AnyEnemy => combatState != null && combatState.Enemies.Any(enemy => enemy.IsAlive),
-            TargetType.AnyPlayer => !PotionRequiresExplicitPlayerSelection(combatState, potion),
+            TargetType.AnyEnemy => GetTargetableEnemyIndices(combatState).Length > 0,
+            TargetType.AnyPlayer => PotionRequiresExplicitPlayerSelection(combatState, potion)
+                ? GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: true).Length > 0
+                : true,
+            TargetType.AnyAlly => GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: false).Length > 0,
             TargetType.TargetedNoCreature => true,
             _ => true
         };
@@ -2466,13 +2554,50 @@ internal static class GameStateService
     private static bool PotionRequiresExplicitPlayerSelection(CombatState? combatState, PotionModel potion)
     {
         return combatState != null &&
+            CombatManager.Instance.IsInProgress &&
             potion.Owner.RunState.Players.Count > 1 &&
             combatState.PlayerCreatures.Count(creature => creature.IsAlive) > 1;
     }
 
-    private static bool RequiresIndexedEnemyTarget(TargetType targetType)
+    private static bool RequiresIndexedCardTarget(TargetType targetType)
     {
-        return targetType == TargetType.AnyEnemy;
+        return targetType == TargetType.AnyEnemy || targetType == TargetType.AnyAlly;
+    }
+
+    public static int[] GetTargetableEnemyIndices(CombatState? combatState)
+    {
+        if (combatState == null)
+        {
+            return Array.Empty<int>();
+        }
+
+        return combatState.Enemies
+            .Select((enemy, index) => new { enemy, index })
+            .Where(entry => entry.enemy.IsAlive && entry.enemy.IsHittable)
+            .Select(entry => entry.index)
+            .ToArray();
+    }
+
+    public static int[] GetTargetablePlayerIndices(CombatState? combatState, Player owner, bool allowSelf)
+    {
+        if (combatState == null)
+        {
+            return Array.Empty<int>();
+        }
+
+        return GetOrderedCombatPlayers(combatState)
+            .Select((player, index) => new { player, index })
+            .Where(entry => entry.player.Creature.IsAlive)
+            .Where(entry => allowSelf || entry.player.NetId != owner.NetId)
+            .Select(entry => entry.index)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<Player> GetOrderedCombatPlayers(CombatState combatState)
+    {
+        return combatState.Players
+            .OrderBy(player => combatState.RunState is RunState runState ? runState.GetPlayerSlotIndex(player) : 0)
+            .ToArray();
     }
 
     private static NMerchantRoom? GetMerchantRoom(IScreenContext? currentScreen)
@@ -3385,6 +3510,10 @@ internal sealed class CombatHandCardPayload
 
     public bool requires_target { get; init; }
 
+    public string? target_index_space { get; init; }
+
+    public int[] valid_target_indices { get; init; } = Array.Empty<int>();
+
     public bool costs_x { get; init; }
 
     public bool star_costs_x { get; init; }
@@ -3565,6 +3694,10 @@ internal sealed class RunPotionPayload
     public bool is_queued { get; init; }
 
     public bool requires_target { get; init; }
+
+    public string? target_index_space { get; init; }
+
+    public int[] valid_target_indices { get; init; } = Array.Empty<int>();
 
     public bool can_use { get; init; }
 

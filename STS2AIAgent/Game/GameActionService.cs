@@ -544,30 +544,49 @@ internal static class GameActionService
             }, retryable: true);
         }
 
+        if (request.target_index == null)
+        {
+            throw new ApiException(409, "invalid_target", "This card requires target_index.", new
+            {
+                action = "play_card",
+                card_id = card.Id.Entry,
+                target_type = card.TargetType.ToString(),
+                target_index_space = card.TargetType == TargetType.AnyEnemy ? "enemies" : "players"
+            });
+        }
+
         if (card.TargetType == TargetType.AnyEnemy)
         {
-            if (request.target_index == null)
-            {
-                throw new ApiException(409, "invalid_target", "This card requires target_index.", new
-                {
-                    action = "play_card",
-                    card_id = card.Id.Entry,
-                    target_type = card.TargetType.ToString()
-                });
-            }
-
             var enemy = GameStateService.ResolveEnemyTarget(combatState, request.target_index.Value);
             if (enemy == null)
             {
-                throw new ApiException(409, "invalid_target", "target_index is out of range.", new
+                throw new ApiException(409, "invalid_target", "target_index is out of range for combat.enemies[].", new
                 {
                     action = "play_card",
                     card_id = card.Id.Entry,
-                    target_index = request.target_index
+                    target_index = request.target_index,
+                    target_index_space = "enemies"
                 });
             }
 
             return enemy;
+        }
+
+        if (card.TargetType == TargetType.AnyAlly)
+        {
+            var allyTargetIndices = GameStateService.GetTargetablePlayerIndices(combatState, card.Owner, allowSelf: false);
+            if (!allyTargetIndices.Contains(request.target_index.Value))
+            {
+                throw new ApiException(409, "invalid_target", "target_index is out of range for combat.players[].", new
+                {
+                    action = "play_card",
+                    card_id = card.Id.Entry,
+                    target_index = request.target_index,
+                    target_index_space = "players"
+                });
+            }
+
+            return GameStateService.ResolvePlayerTarget(combatState, request.target_index.Value);
         }
 
         throw new ApiException(409, "invalid_action", "This target type is not supported yet.", new
@@ -2823,6 +2842,7 @@ internal static class GameActionService
         return potion.TargetType switch
         {
             TargetType.AnyEnemy => ResolvePotionEnemyTarget(request, combatState, potion),
+            TargetType.AnyPlayer when GameStateService.PotionRequiresTarget(combatState, potion) => ResolvePotionPlayerTarget(request, combatState, potion),
             TargetType.TargetedNoCreature => null,
             _ => potion.Owner.Creature
         };
@@ -2845,22 +2865,68 @@ internal static class GameActionService
             {
                 action = "use_potion",
                 potion_id = potion.Id.Entry,
-                target_type = potion.TargetType.ToString()
+                target_type = potion.TargetType.ToString(),
+                target_index_space = "enemies"
             });
         }
 
         var enemy = GameStateService.ResolveEnemyTarget(combatState, request.target_index.Value);
         if (enemy == null)
         {
-            throw new ApiException(409, "invalid_target", "target_index is out of range.", new
+            throw new ApiException(409, "invalid_target", "target_index is out of range for combat.enemies[].", new
             {
                 action = "use_potion",
                 potion_id = potion.Id.Entry,
-                target_index = request.target_index
+                target_index = request.target_index,
+                target_index_space = "enemies"
             });
         }
 
         return enemy;
+    }
+
+    private static Creature ResolvePotionPlayerTarget(ActionRequest request, CombatState? combatState, PotionModel potion)
+    {
+        if (combatState == null)
+        {
+            throw new ApiException(503, "state_unavailable", "Combat state is unavailable.", new
+            {
+                action = "use_potion",
+                potion_id = potion.Id.Entry
+            }, retryable: true);
+        }
+
+        if (request.target_index == null)
+        {
+            throw new ApiException(409, "invalid_target", "This potion requires target_index.", new
+            {
+                action = "use_potion",
+                potion_id = potion.Id.Entry,
+                target_type = potion.TargetType.ToString(),
+                target_index_space = "players"
+            });
+        }
+
+        var playerTargetIndices = GameStateService.GetTargetablePlayerIndices(combatState, potion.Owner, allowSelf: true);
+        if (!playerTargetIndices.Contains(request.target_index.Value))
+        {
+            throw new ApiException(409, "invalid_target", "target_index is out of range for combat.players[].", new
+            {
+                action = "use_potion",
+                potion_id = potion.Id.Entry,
+                target_index = request.target_index,
+                target_index_space = "players"
+            });
+        }
+
+        return GameStateService.ResolvePlayerTarget(combatState, request.target_index.Value)
+            ?? throw new ApiException(409, "invalid_target", "target_index is out of range for combat.players[].", new
+            {
+                action = "use_potion",
+                potion_id = potion.Id.Entry,
+                target_index = request.target_index,
+                target_index_space = "players"
+            });
     }
 
     private static NEpochSlot ResolveTimelineSlot(IScreenContext? currentScreen, int optionIndex)
