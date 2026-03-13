@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -142,6 +143,10 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
     profile = _normalize_tool_profile(tool_profile)
     mcp = FastMCP("STS2 AI Agent")
 
+    def _is_actionable_state(state: dict[str, Any]) -> bool:
+        actions = state.get("available_actions")
+        return isinstance(actions, list) and len(actions) > 0
+
     @mcp.tool
     def health_check() -> dict[str, Any]:
         """Check whether the STS2 AI Agent Mod is loaded and reachable."""
@@ -173,6 +178,90 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
     def get_available_actions() -> list[dict[str, Any]]:
         """List currently executable actions with `requires_index` and `requires_target` hints."""
         return sts2.get_available_actions()
+
+    @mcp.tool
+    def wait_for_event(event_names: str = "", timeout_seconds: float = 20.0) -> dict[str, Any]:
+        """Wait for one matching game event from `/events/stream`.
+
+        - `event_names`: comma-separated event names. Empty means accept any event.
+        - `timeout_seconds`: maximum wait time before returning `matched=false`.
+        """
+        timeout = max(0.1, float(timeout_seconds))
+        target_names = [name.strip() for name in event_names.split(",") if name.strip()]
+        event = sts2.wait_for_event(
+            event_names=target_names or None,
+            timeout=timeout,
+        )
+        if event is None:
+            return {
+                "matched": False,
+                "event": None,
+                "event_names": target_names,
+                "timeout_seconds": timeout,
+            }
+
+        return {
+            "matched": True,
+            "event": event,
+            "event_names": target_names,
+            "timeout_seconds": timeout,
+        }
+
+    @mcp.tool
+    def wait_until_actionable(timeout_seconds: float = 20.0) -> dict[str, Any]:
+        """Wait until a new actionable phase is reported, then return fresh state.
+
+        This reduces high-frequency polling between enemy turns, map transitions,
+        and reward animations. Falls back to basic polling when SSE events are
+        unavailable or no matching event arrives in time.
+        """
+        timeout = max(0.1, float(timeout_seconds))
+        actionable_events = {
+            "player_action_window_opened",
+            "route_decision_required",
+            "reward_decision_required",
+            "available_actions_changed",
+            "screen_changed",
+        }
+
+        started_at = time.monotonic()
+        event: dict[str, Any] | None = None
+        source = "events"
+
+        try:
+            event = sts2.wait_for_event(event_names=actionable_events, timeout=timeout)
+        except Exception:
+            event = None
+            source = "polling"
+
+        remaining = max(0.0, timeout - (time.monotonic() - started_at))
+        state = sts2.get_state()
+
+        if event is None and not _is_actionable_state(state) and remaining > 0:
+            source = "polling"
+            interval = max(0.05, float(os.getenv("STS2_MCP_FALLBACK_POLL_SECONDS", "0.25")))
+            deadline = time.monotonic() + remaining
+            baseline_signature = "|".join(sorted(str(name) for name in (state.get("available_actions") or [])))
+
+            while time.monotonic() < deadline:
+                time.sleep(interval)
+                state = sts2.get_state()
+                if _is_actionable_state(state):
+                    break
+
+                signature = "|".join(sorted(str(name) for name in (state.get("available_actions") or [])))
+                if signature != baseline_signature:
+                    break
+
+        actions = sts2.get_available_actions()
+        return {
+            "matched": event is not None,
+            "event": event,
+            "state": state,
+            "actions": actions,
+            "timeout_seconds": timeout,
+            "source": source,
+        }
 
     @mcp.tool
     def act(
