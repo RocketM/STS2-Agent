@@ -19,6 +19,7 @@ using MegaCrit.Sts2.Core.Models.Relics;
 using MegaCrit.Sts2.Core.Logging;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+using MegaCrit.Sts2.Core.MonsterMoves.Intents;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Cards.Holders;
 using MegaCrit.Sts2.Core.Nodes.Combat;
@@ -48,7 +49,7 @@ namespace STS2AIAgent.Game;
 
 internal static class GameStateService
 {
-    private const int StateVersion = 3;
+    private const int StateVersion = 4;
 
     public static GameStatePayload BuildStatePayload()
     {
@@ -2320,6 +2321,9 @@ internal static class GameStateService
 
     private static CombatEnemyPayload BuildEnemyPayload(Creature enemy, int index)
     {
+        var moveId = enemy.Monster?.NextMove?.Id;
+        var intents = BuildEnemyIntentPayloads(enemy);
+
         return new CombatEnemyPayload
         {
             index = index,
@@ -2330,8 +2334,76 @@ internal static class GameStateService
             block = enemy.Block,
             is_alive = enemy.IsAlive,
             is_hittable = enemy.IsHittable,
-            intent = enemy.Monster?.NextMove?.Id
+            intent = moveId,
+            move_id = moveId,
+            intents = intents
         };
+    }
+
+    private static CombatEnemyIntentPayload[] BuildEnemyIntentPayloads(Creature enemy)
+    {
+        var nextMove = enemy.Monster?.NextMove;
+        if (nextMove == null)
+        {
+            return Array.Empty<CombatEnemyIntentPayload>();
+        }
+
+        var targets = enemy.CombatState?.Players
+            .Select(player => player.Creature)
+            .ToArray() ?? Array.Empty<Creature>();
+
+        return nextMove.Intents
+            .Select((intent, index) => BuildEnemyIntentPayload(intent, enemy, targets, index))
+            .ToArray();
+    }
+
+    private static CombatEnemyIntentPayload BuildEnemyIntentPayload(
+        AbstractIntent intent,
+        Creature owner,
+        Creature[] targets,
+        int index)
+    {
+        int? damage = null;
+        int? hits = null;
+        int? totalDamage = null;
+        int? statusCardCount = null;
+
+        if (intent is AttackIntent attackIntent)
+        {
+            damage = SafeReadNullableInt(() => attackIntent.GetSingleDamage(targets, owner));
+            hits = SafeReadNullableInt(() => Math.Max(1, attackIntent.Repeats));
+            totalDamage = SafeReadNullableInt(() => attackIntent.GetTotalDamage(targets, owner));
+        }
+
+        if (intent is StatusIntent statusIntent)
+        {
+            statusCardCount = SafeReadNullableInt(() => statusIntent.CardCount);
+        }
+
+        var label = SafeReadString(() => intent.GetIntentLabel(targets, owner).GetFormattedText(), string.Empty);
+
+        return new CombatEnemyIntentPayload
+        {
+            index = index,
+            intent_type = intent.IntentType.ToString(),
+            label = string.IsNullOrWhiteSpace(label) ? null : label,
+            damage = damage,
+            hits = hits,
+            total_damage = totalDamage,
+            status_card_count = statusCardCount
+        };
+    }
+
+    private static int? SafeReadNullableInt(Func<int> getter)
+    {
+        try
+        {
+            return getter();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static CombatOrbPayload BuildCombatOrbPayload(OrbModel orb, int slotIndex)
@@ -3945,6 +4017,27 @@ internal sealed class CombatEnemyPayload
     public bool is_hittable { get; init; }
 
     public string? intent { get; init; }
+
+    public string? move_id { get; init; }
+
+    public CombatEnemyIntentPayload[] intents { get; init; } = Array.Empty<CombatEnemyIntentPayload>();
+}
+
+internal sealed class CombatEnemyIntentPayload
+{
+    public int index { get; init; }
+
+    public string intent_type { get; init; } = string.Empty;
+
+    public string? label { get; init; }
+
+    public int? damage { get; init; }
+
+    public int? hits { get; init; }
+
+    public int? total_damage { get; init; }
+
+    public int? status_card_count { get; init; }
 }
 
 internal sealed class RewardPayload

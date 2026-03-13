@@ -263,6 +263,11 @@ try {
     Invoke-RepoScript -Name "target index contracts" -FileName "test-target-index-contract.ps1"
     Invoke-RepoScript -Name "state invariants after target index contracts" -FileName "test-state-invariants.ps1"
 
+    Start-DebugSession -StepName "start debug session for enemy intents payload"
+    Ensure-ActiveRunMainMenu
+    Invoke-RepoScript -Name "enemy intents payload" -FileName "test-enemy-intents-payload.ps1"
+    Invoke-RepoScript -Name "state invariants after enemy intents payload" -FileName "test-state-invariants.ps1"
+
     Invoke-RepoScript -Name "multiplayer lobby flow" -FileName "test-multiplayer-lobby-flow.ps1"
 
     Start-DebugSession -StepName "start debug session for new-run lifecycle"

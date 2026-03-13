@@ -115,7 +115,7 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `state_version` | number | 状态模型版本（当前固定为 1） |
+| `state_version` | number | 状态模型版本（当前固定为 4） |
 | `run_id` | string | 本局运行标识（种子字符串） |
 | `screen` | string | 当前逻辑界面（见 Screen 枚举） |
 | `in_combat` | boolean | 是否处于战斗流程 |
@@ -175,7 +175,21 @@
 | `block` | number | 当前格挡值 |
 | `is_alive` | boolean | 是否存活 |
 | `is_hittable` | boolean | 是否可被攻击 |
-| `intent` | string \| null | 意图 ID（如有） |
+| `intent` | string \| null | 兼容旧字段，等同于怪物下一招的原始 `move_id` |
+| `move_id` | string \| null | 怪物下一招的内部状态 ID，例如 `PECK_MOVE` |
+| `intents` | object[] | 怪物下一招拆解出的具体意图列表，顺序与游戏 UI 一致 |
+
+#### `combat.enemies[].intents[]`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `index` | number | 意图索引 |
+| `intent_type` | string | 具体意图类型，如 `Attack`、`Buff`、`StatusCard` |
+| `label` | string \| null | UI 上显示的意图文字，如 `7`、`7x2` |
+| `damage` | number \| null | 单次伤害，非攻击意图时为 null |
+| `hits` | number \| null | 攻击次数，非攻击意图时为 null |
+| `total_damage` | number \| null | 总伤害，非攻击意图时为 null |
+| `status_card_count` | number \| null | 塞入状态牌数量，仅 `StatusCard` 意图时存在 |
 
 ### `run` 子结构
 
@@ -441,7 +455,7 @@
   "ok": true,
   "request_id": "req_20260310_120000_1234",
   "data": {
-    "state_version": 1,
+    "state_version": 4,
     "run_id": "WXJVZBQFK2",
     "screen": "COMBAT",
     "in_combat": true,
@@ -493,7 +507,19 @@
           "block": 0,
           "is_alive": true,
           "is_hittable": true,
-          "intent": "ATTACK"
+          "intent": "PECK_MOVE",
+          "move_id": "PECK_MOVE",
+          "intents": [
+            {
+              "index": 0,
+              "intent_type": "Attack",
+              "label": "7",
+              "damage": 7,
+              "hits": 1,
+              "total_damage": 7,
+              "status_card_count": null
+            }
+          ]
         }
       ]
     },
