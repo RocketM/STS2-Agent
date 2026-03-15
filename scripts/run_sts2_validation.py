@@ -94,10 +94,17 @@ class ApiClient:
         self._require_ok(payload, "GET /state")
         return payload["data"]
 
-    def get_available_actions(self) -> list[dict[str, Any]]:
+    def get_available_actions_payload(self) -> dict[str, Any]:
         payload = self.request("GET", "/actions/available")
         self._require_ok(payload, "GET /actions/available")
-        return list(payload["data"]["actions"])
+        data = payload["data"]
+        if not isinstance(data, dict):
+            raise ValidationError(f"GET /actions/available returned an invalid data payload: {json.dumps(payload, ensure_ascii=False)}")
+        return data
+
+    def get_available_actions(self) -> list[dict[str, Any]]:
+        payload = self.get_available_actions_payload()
+        return list(payload["actions"])
 
     def action(self, action_name: str, **kwargs: Any) -> dict[str, Any]:
         payload = {"action": action_name}
@@ -242,15 +249,81 @@ def test_indexed_target_contract(
             failures.append(f"{label} requires_target=false but valid_target_indices is populated")
 
 
-def evaluate_state_invariants(client: ApiClient) -> dict[str, Any]:
-    state = client.get_state()
-    actions = client.get_available_actions()
-    action_set = {
+def extract_action_name_set(actions: list[dict[str, Any]]) -> set[str]:
+    return {
         str(action.get("name"))
         for action in actions
         if isinstance(action, dict) and has_text(action.get("name"))
     }
-    state_action_set = {str(action_name) for action_name in list(state.get("available_actions") or []) if has_text(action_name)}
+
+
+def get_invariant_snapshot(
+    client: ApiClient,
+    *,
+    attempts: int = 3,
+    delay_ms: int = 50,
+) -> tuple[dict[str, Any], list[dict[str, Any]], set[str], set[str]]:
+    last_state: dict[str, Any] | None = None
+    last_actions: list[dict[str, Any]] = []
+    last_action_set: set[str] = set()
+    last_state_action_set: set[str] = set()
+    last_error: ApiRequestError | None = None
+
+    for attempt in range(attempts):
+        try:
+            state_before = client.get_state()
+            actions_payload = client.get_available_actions_payload()
+        except ApiRequestError as exc:
+            if not exc.retryable:
+                raise
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_ms / 1000.0)
+            continue
+
+        actions = list(actions_payload.get("actions") or [])
+        action_set = extract_action_name_set(actions)
+        before_action_set = {str(action_name) for action_name in list(state_before.get("available_actions") or []) if has_text(action_name)}
+        actions_screen = str(actions_payload.get("screen") or "")
+
+        if action_set == before_action_set and state_before.get("screen") == actions_screen:
+            return state_before, actions, action_set, before_action_set
+
+        try:
+            state_after = client.get_state()
+        except ApiRequestError as exc:
+            if not exc.retryable:
+                raise
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_ms / 1000.0)
+            continue
+
+        after_action_set = {
+            str(action_name) for action_name in list(state_after.get("available_actions") or []) if has_text(action_name)
+        }
+        if action_set == after_action_set and state_after.get("screen") == actions_screen:
+            return state_after, actions, action_set, after_action_set
+
+        last_state = state_after
+        last_actions = actions
+        last_action_set = action_set
+        last_state_action_set = after_action_set
+
+        if attempt < attempts - 1:
+            time.sleep(delay_ms / 1000.0)
+
+    if last_state is None:
+        if last_error is not None:
+            raise ValidationError(f"Timed out waiting for a readable invariant snapshot. Last retryable error: {last_error}")
+        last_state = client.get_state()
+        last_state_action_set = {str(action_name) for action_name in list(last_state.get("available_actions") or []) if has_text(action_name)}
+
+    return last_state, last_actions, last_action_set, last_state_action_set
+
+
+def evaluate_state_invariants(client: ApiClient) -> dict[str, Any]:
+    state, actions, action_set, state_action_set = get_invariant_snapshot(client)
 
     failures: list[str] = []
     warnings: list[str] = []
@@ -1050,21 +1123,17 @@ def wait_for_readable_snapshot(
     attempts: int,
     delay_ms: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    last_error: ApiRequestError | None = None
-    for _ in range(attempts):
-        try:
-            state = client.get_state()
-            actions = client.get_available_actions()
-            return state, actions
-        except ApiRequestError as exc:
-            if not exc.retryable:
-                raise
-            last_error = exc
-            time.sleep(delay_ms / 1000.0)
-
-    if last_error is not None:
-        raise ValidationError(f"Timed out waiting for {description}. Last retryable error: {last_error}")
-    raise ValidationError(f"Timed out waiting for {description}")
+    try:
+        state, actions, _action_set, _state_action_set = get_invariant_snapshot(
+            client,
+            attempts=attempts,
+            delay_ms=delay_ms,
+        )
+        return state, actions
+    except ApiRequestError:
+        raise
+    except ValidationError as exc:
+        raise ValidationError(f"Timed out waiting for {description}. {exc}") from exc
 
 
 def suite_mod_load(args: argparse.Namespace) -> dict[str, Any]:
@@ -1317,7 +1386,20 @@ def suite_debug_console_gating(args: argparse.Namespace) -> dict[str, Any]:
 
     api_client = ApiClient(base_url=args.base_url, timeout=args.timeout_sec)
     api_client.request("GET", "/health")
-    result = api_client.action("run_console_command", command=args.command)
+    try:
+        result = api_client.action("run_console_command", command=args.command)
+    except ApiRequestError as exc:
+        if expected_enabled:
+            raise
+        result = {
+            "ok": False,
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                "retryable": exc.retryable,
+            },
+        }
 
     if expected_enabled:
         if not result.get("ok") or result.get("data", {}).get("status") != "completed":
